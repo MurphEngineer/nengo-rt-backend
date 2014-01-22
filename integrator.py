@@ -39,50 +39,45 @@ print("Activities: " + str(activities.shape))
 # print(activities[:,0]) # this looks right for one neuron
 
 print("Plotting activities...")
+f1 = plt.figure()
 plt.plot(eval_points, activities)
-plt.show()
+f1.suptitle('Neural activities')
 
 u, s, v = np.linalg.svd(activities.transpose())
 
 # check PCs, which should be in v
 npc = 7
 print("Plotting principal components...")
+f2 = plt.figure()
 plt.plot(eval_points, v[0:npc,:].transpose())
-plt.show()
+f2.suptitle('Principal components')
 
-print((u.shape, s.shape, v.shape))
 S = np.zeros((u.shape[0], v.shape[0]), dtype=complex)
 S[:s.shape[0], :s.shape[0]] = np.diag(s)
-
-# as a test, find optimal linear firing-rate decoders and see if the estimate makes sense
-gamma = np.dot(activities.transpose(), activities)
-gamma = gamma + np.dot(np.mean(np.diag(gamma)), np.identity(gamma.shape[0]))
-upsilon = np.dot(activities.transpose(), eval_points)
-decoders = np.linalg.solve(gamma, upsilon)
+# find optimal linear firing-rate decoders and see if the estimate makes sense
+#gamma = np.dot(activities.transpose(), activities)
+#gamma = gamma + np.dot(np.mean(np.diag(gamma)), np.identity(gamma.shape[0]))
+#upsilon = np.dot(activities.transpose(), eval_points)
+#decoders = np.linalg.solve(gamma, upsilon)
+c0_built = sim.model.connections[0]
+decoders = c0_built.decoders * (1.0 / 1000.0) # multiply by timestep to get activities per timestep instead of activities per second
 estimate = np.dot(activities, decoders)
 
 print("Plotting decoded estimate from rates...")
+f3 = plt.figure()
 plt.plot(eval_points, estimate)
-plt.show()
+f3.suptitle('Decoded estimate from rates')
 
 # calculate PCs over saturation range
 xExtended = np.matrix([np.linspace(-2.0, 2.0, num=len(eval_points))]).transpose()
 ratesExtended = A_built.activities(xExtended)
 usi = np.linalg.pinv(np.dot(u,S))
-print(usi.shape)
-print(ratesExtended.shape)
 PCsExtended = np.dot(usi[0:npc, :], ratesExtended.transpose())
 
-print(xExtended.shape)
-print(PCsExtended.shape)
-
-t1 = xExtended
-t2 = PCsExtended
-print(t1.shape)
-print(t2.shape)
 print("Plotting extended principal components...")
-plt.plot(t1,t2.transpose())
-plt.show()
+f4 = plt.figure()
+plt.plot(xExtended,PCsExtended.transpose())
+f4.suptitle('Extended principal components')
 
 # calculate approximate decoders
 approxDecoders = np.dot(S[0:npc, 0:npc], np.dot(u[:,0:npc].transpose(), decoders))
@@ -90,16 +85,19 @@ print("Decoders: " + str(approxDecoders))
 print((PCsExtended.shape, approxDecoders.shape))
 approxEstimate = np.dot(PCsExtended.transpose(), approxDecoders)
 print("Plotting decoded estimate from principal components...")
+f5 = plt.figure()
 plt.plot(xExtended, approxEstimate)
-plt.show()
+f5.suptitle('Decoded estimate from principal components')
 
 # cheating is over
 
 print("Plotting simulation output...")
 t = sim.trange()
+f6 = plt.figure()
 plt.plot(t, sim.data(p1), label="Input")
 plt.plot(t, sim.data(p2), 'k', label="Integrator output")
 plt.legend()
+f6.suptitle('Software simulation output')
 plt.show()
 
 # now attempt this in hardware
