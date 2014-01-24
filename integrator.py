@@ -6,9 +6,14 @@ import nengo_rt_backend
 
 import numpy as np
 
+import os
+
 # enable debug spew
 import logging
 logging.basicConfig(level=logging.DEBUG)
+
+# set to True to plot intermediate results, which will block until closed
+makePlots = False
 
 model = nengo.Model(label='Integrator')
 
@@ -38,19 +43,21 @@ print("Activities: " + str(activities.shape))
 
 # print(activities[:,0]) # this looks right for one neuron
 
-print("Plotting activities...")
-f1 = plt.figure()
-plt.plot(eval_points, activities)
-f1.suptitle('Neural activities')
+if makePlots:
+    print("Plotting activities...")
+    f1 = plt.figure()
+    plt.plot(eval_points, activities)
+    f1.suptitle('Neural activities')
 
 u, s, v = np.linalg.svd(activities.transpose())
 
 # check PCs, which should be in v
 npc = 7
-print("Plotting principal components...")
-f2 = plt.figure()
-plt.plot(eval_points, v[0:npc,:].transpose())
-f2.suptitle('Principal components')
+if makePlots:
+    print("Plotting principal components...")
+    f2 = plt.figure()
+    plt.plot(eval_points, v[0:npc,:].transpose())
+    f2.suptitle('Principal components')
 
 S = np.zeros((u.shape[0], v.shape[0]), dtype=complex)
 S[:s.shape[0], :s.shape[0]] = np.diag(s)
@@ -63,10 +70,11 @@ c0_built = sim.model.connections[0]
 decoders = c0_built.decoders * (1.0 / 1000.0) # multiply by timestep to get activities per timestep instead of activities per second
 estimate = np.dot(activities, decoders)
 
-print("Plotting decoded estimate from rates...")
-f3 = plt.figure()
-plt.plot(eval_points, estimate)
-f3.suptitle('Decoded estimate from rates')
+if makePlots:
+    print("Plotting decoded estimate from rates...")
+    f3 = plt.figure()
+    plt.plot(eval_points, estimate)
+    f3.suptitle('Decoded estimate from rates')
 
 # calculate PCs over saturation range
 xExtended = np.matrix([np.linspace(-2.0, 2.0, num=len(eval_points))]).transpose()
@@ -74,31 +82,35 @@ ratesExtended = A_built.activities(xExtended)
 usi = np.linalg.pinv(np.dot(u,S))
 PCsExtended = np.dot(usi[0:npc, :], ratesExtended.transpose())
 
-print("Plotting extended principal components...")
-f4 = plt.figure()
-plt.plot(xExtended,PCsExtended.transpose())
-f4.suptitle('Extended principal components')
+if makePlots:
+    print("Plotting extended principal components...")
+    f4 = plt.figure()
+    plt.plot(xExtended,PCsExtended.transpose())
+    f4.suptitle('Extended principal components')
 
 # calculate approximate decoders
 approxDecoders = np.dot(S[0:npc, 0:npc], np.dot(u[:,0:npc].transpose(), decoders))
-print("Decoders: " + str(approxDecoders))
+print("Decoders: " + os.linesep + str(approxDecoders))
 print((PCsExtended.shape, approxDecoders.shape))
 approxEstimate = np.dot(PCsExtended.transpose(), approxDecoders)
-print("Plotting decoded estimate from principal components...")
-f5 = plt.figure()
-plt.plot(xExtended, approxEstimate)
-f5.suptitle('Decoded estimate from principal components')
+
+if makePlots:
+    print("Plotting decoded estimate from principal components...")
+    f5 = plt.figure()
+    plt.plot(xExtended, approxEstimate)
+    f5.suptitle('Decoded estimate from principal components')
 
 # cheating is over
 
-print("Plotting simulation output...")
-t = sim.trange()
-f6 = plt.figure()
-plt.plot(t, sim.data(p1), label="Input")
-plt.plot(t, sim.data(p2), 'k', label="Integrator output")
-plt.legend()
-f6.suptitle('Software simulation output')
-plt.show()
+if makePlots:
+    print("Plotting simulation output...")
+    t = sim.trange()
+    f6 = plt.figure()
+    plt.plot(t, sim.data(p1), label="Input")
+    plt.plot(t, sim.data(p2), 'k', label="Integrator output")
+    plt.legend()
+    f6.suptitle('Software simulation output')
+    plt.show()
 
 # now attempt this in hardware
 sim = nengo_rt_backend.Simulator(model)
