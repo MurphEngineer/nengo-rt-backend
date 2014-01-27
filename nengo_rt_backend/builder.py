@@ -1,21 +1,29 @@
 import numpy as np
+import scipy
 
+from .target import Target, Board, Output, Input, Control, IO
+
+import os
 import logging
+import xml.etree.ElementTree as ET
 
 import nengo
 import nengo.decoders
 import nengo.nonlinearities
 
-import os
 
 log = logging.getLogger(__name__)
 
 class ShapeMismatch(ValueError):
     pass
 
+class NotFeasible(ValueError):
+    pass
+
 class Builder(object):
-    def __init__(self):
-        pass
+    def __init__(self, targetFile=None):
+        self.targetFile = targetFile
+        self.modelAnalysis = False
 
     def __call__(self, model, dt):
         if dt != 0.001:
@@ -79,11 +87,122 @@ class Builder(object):
             
             log.debug("Filter time constants for " + population.label + ": " 
                       + str(filters))
+
             if len(filters) > 2:
                 raise ValueError(
                     "Ensemble " + population.label + " has a total of " + str(len(filters)) + 
                     " distinct filter time constants among all incoming connections."
                     " The maximum number supported by this backend is 2.")
+
+            # use sets of filters instead of lists of filters in order to allow hashing,
+            # since these become the keys to a dictionary in a later step
+            population.filters = frozenset(filters)
+
+        # if a target file was not specified, perform model analysis
+        if self.targetFile is None:
+            log.info("No target file specified, performing model analysis")
+            self.modelAnalysis = True
+            # create a fake target
+            self.target = Target()
+            self.target.name = "(model analysis target)"
+            board = Board()
+            board.name = "(model analysis board)"
+            board.dv_count = 0
+            board.input_dv_count = 0
+            board.first_input_dv_index = 0
+            board.population_1d_count = 0
+            board.population_2d_count = 0
+            outp = Output()
+            outp.name = "(model analysis output)"
+            outp.index = 0
+            outp.first_dv_index = 0
+            outp.last_dv_index = 0
+            board.outputs.append(outp)
+            inp = Input()
+            inp.name = "(model analysis input)"
+            inp.index = 0
+            inp.first_dv_index = 0
+            inp.last_dv_index = 0
+            board.inputs.append(inp)
+            control = Control()
+            control.name = "(model analysis control)"
+            control.type = "model-analysis"
+            board.controls.append(control)
+            io = IO()
+            io.name = "(model analysis I/O)"
+            io.type = "model-analysis"
+            io.input = "(model analysis input)"
+            io.output = "(model analysis output)"
+            board.ios.append(io)
+            self.target.boards.append(board)
+        else:
+            # FIXME parse target file and generate target object
+            raise NotImplementedError("custom targets not yet supported")
+
+        # collect resource counts
+        for b in self.target.boards:
+            self.target.total_population_1d_count += b.population_1d_count
+            self.target.total_population_2d_count += b.population_2d_count
+
+        log.info("Grouping 1D populations by filter time constants")
+        self.populations_1d_by_filters = dict()
+        for p in self.populations:
+            if p.dimensions != 1:
+                continue
+            key = p.filters
+            if key not in self.populations_1d_by_filters:
+                self.populations_1d_by_filters[key] = []
+            self.populations_1d_by_filters[key].append(p)
+
+
+        # VERIFY: there are no more of these sets than there are 1D population units
+        minimum_1d_populations = len(self.populations_1d_by_filters.keys())
+        log.debug("A total of " + str(minimum_1d_populations) + 
+                  " distinct sets of filter time constants exist among 1D populations")
+        if minimum_1d_populations > self.target.total_population_1d_count:
+            if self.modelAnalysis:
+                # set the number of available 1D populations on the target to the minimum number
+                self.target.boards[0].population_1d_count = minimum_1d_populations
+                self.target.total_population_1d_count = minimum_1d_populations
+            else:
+                raise NotFeasible(str(minimum_1d_populations) + 
+                                  " 1D population units are required, at minimum, to run this network."
+                                  " However, " + str(self.target.total_population_1d_count) + " 1D population units"
+                                  " are available on the specified target."
+                                  " Either choose a target with more total population units"
+                                  " or reduce the number of distinct sets of filter time constants"
+                                  " among all 1D populations."
+                                  )
+
+        log.info("Grouping 2D populations by filter time constants")
+        self.populations_2d_by_filters = dict()
+        for p in self.populations:
+            if p.dimensions != 2:
+                continue
+            key = p.filters
+            if key not in self.populations_2d_by_filters:
+                self.populations_2d_by_filters[key] = []
+            self.populations_2d_by_filters[key].append(p)
+
+
+        # VERIFY: there are no more of these sets than there are 2D population units
+        minimum_2d_populations = len(self.populations_2d_by_filters.keys())
+        log.debug("A total of " + str(minimum_2d_populations) + 
+                  " distinct sets of filter time constants exist among 2D populations")
+        if minimum_2d_populations > self.target.total_population_2d_count:
+            if self.modelAnalysis:
+                # set the number of available 2D populations on the target to the minimum number
+                self.target.boards[0].population_2d_count = minimum_2d_populations
+                self.target.total_population_2d_count = minimum_2d_populations
+            else:
+                raise NotFeasible(str(minimum_2d_populations) + 
+                                  " 2D population units are required, at minimum, to run this network."
+                                  " However, " + str(self.target.total_population_2d_count) + " 2D population units"
+                                  " are available on the specified target."
+                                  " Either choose a target with more total population units"
+                                  " or reduce the number of distinct sets of filter time constants"
+                                  " among all 2D populations."
+                                  )
 
     def build_ensemble(self, ens):
         log.debug("Building ensemble " + str(ens.label))

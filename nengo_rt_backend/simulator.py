@@ -15,11 +15,9 @@ log = logging.getLogger(__name__)
 
 class Simulator(object):
     
-    def __init__(self, model, dt=0.001, seed=None, builder=None):
-        # FIXME board connection parameters
-        # FIXME board layout parameters
+    def __init__(self, model, dt=0.001, seed=None, builder=None, targetFile=None):
         if builder is None:
-            builder = Builder()
+            builder = Builder(targetFile)
             
         self.model = builder(model, dt)
 
