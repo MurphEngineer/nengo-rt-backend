@@ -1,7 +1,10 @@
 import numpy as np
 import scipy
+import scipy.cluster
+import math
 
-from .target import Target, Board, Output, Input, Control, IO
+#from .target import Target, Board, Output, Input, Control, IO
+from .target import Target
 
 import os
 import logging
@@ -11,8 +14,43 @@ import nengo
 import nengo.decoders
 import nengo.nonlinearities
 
+# for visualization
+import matplotlib.pyplot as plt
 
 log = logging.getLogger(__name__)
+  
+def principal_component_distance(P1, P2):
+    assert(P1.principal_components.shape == P2.principal_components.shape)
+    result = 0
+    # zip together corresponding principal components
+    for pc in zip(P1.principal_components, P2.principal_components):
+        # try both the original PCs and the negative of one of the PCs,
+        # and take the smaller distance
+        # FIXME normalization
+        r1 = scipy.spatial.distance.euclidean(pc[0], pc[1])
+        r2 = scipy.spatial.distance.euclidean(pc[0], -1 * pc[1])
+        result += min(r1, r2)
+    
+    return result
+
+def filter_distance(P1, P2):
+    # FIXME
+    return 0.0
+
+def object_pdist(objs, metric):
+    # Like scipy.spatial.distance.pdist, but can take an ARBITRARY sequence
+    # of objects, provided the 2-arity metric can be called on them.
+    X = np.asarray(objs, order='c')
+    s = X.shape
+    m = s[0]
+    dm = np.zeros((m * (m-1)) // 2, dtype=np.double)
+    k = 0
+    for i in range(0, m-1):
+        for j in range(i+1, m):
+            dm[k] = metric(X[i], X[j])
+            k += 1
+    
+    return dm
 
 class ShapeMismatch(ValueError):
     pass
@@ -21,9 +59,10 @@ class NotFeasible(ValueError):
     pass
 
 class Builder(object):
-    def __init__(self, targetFile=None):
+    def __init__(self, targetFile=None, weightPCDistance=0.5, weightFilterDistance=0.5):
         self.targetFile = targetFile
-        self.modelAnalysis = False
+        self.weightPCDistance = weightPCDistance
+        self.weightFilterDistance = weightFilterDistance
 
     def __call__(self, model, dt):
         if dt != 0.001:
@@ -98,111 +137,112 @@ class Builder(object):
             # since these become the keys to a dictionary in a later step
             population.filters = frozenset(filters)
 
-        # if a target file was not specified, perform model analysis
         if self.targetFile is None:
-            log.info("No target file specified, performing model analysis")
-            self.modelAnalysis = True
-            # create a fake target
-            self.target = Target()
-            self.target.name = "(model analysis target)"
-            board = Board()
-            board.name = "(model analysis board)"
-            board.dv_count = 0
-            board.input_dv_count = 0
-            board.first_input_dv_index = 0
-            board.population_1d_count = 0
-            board.population_2d_count = 0
-            outp = Output()
-            outp.name = "(model analysis output)"
-            outp.index = 0
-            outp.first_dv_index = 0
-            outp.last_dv_index = 0
-            board.outputs.append(outp)
-            inp = Input()
-            inp.name = "(model analysis input)"
-            inp.index = 0
-            inp.first_dv_index = 0
-            inp.last_dv_index = 0
-            board.inputs.append(inp)
-            control = Control()
-            control.name = "(model analysis control)"
-            control.type = "model-analysis"
-            board.controls.append(control)
-            io = IO()
-            io.name = "(model analysis I/O)"
-            io.type = "model-analysis"
-            io.input = "(model analysis input)"
-            io.output = "(model analysis output)"
-            board.ios.append(io)
-            self.target.boards.append(board)
+            raise ValueError("targetFile not specified")
         else:
-            # FIXME parse target file and generate target object
-            raise NotImplementedError("custom targets not yet supported")
+            # parse target file
+            self.target = Target(self.targetFile)
+            log.info("Targeting device with " + str(self.target.total_population_1d_count) + 
+                     " one-dimensional populations"
+                     " and " + str(self.target.total_population_2d_count) + 
+                     " two-dimensional populations")
 
-        # collect resource counts
-        for b in self.target.boards:
-            self.target.total_population_1d_count += b.population_1d_count
-            self.target.total_population_2d_count += b.population_2d_count
+        # FIXME: before we can do this, check the number of decoded values from each population
+        # and if there are more than four, split the population into copies until there are at most
+        # four decoded values coming from each one
 
-        log.info("Grouping 1D populations by filter time constants")
-        self.populations_1d_by_filters = dict()
-        for p in self.populations:
-            if p.dimensions != 1:
-                continue
-            key = p.filters
-            if key not in self.populations_1d_by_filters:
-                self.populations_1d_by_filters[key] = []
-            self.populations_1d_by_filters[key].append(p)
+        # perform clustering of 1D populations
+        log.info("Clustering 1D population groups")
+        dist = object_pdist(self.populations, self.population_distance)
+        nonzero_dist = dist[dist > 0.0]
+        square_dist = scipy.spatial.distance.squareform(dist)
+        log.debug("Maximum distance is " + str(max(dist)))
+        log.debug("Minimum non-zero distance is " + str(min(nonzero_dist)))
+        log.debug("Average non-zero distance is " + str(np.mean(nonzero_dist)))
+ 
+        # visualize
+#        log.debug("Plotting distance matrix")
+#        imgplot = plt.matshow(square_dist)
+#        plt.show()
+        
+        linkage = scipy.cluster.hierarchy.linkage(dist, method='single')
+        # visualize
+#        log.debug("Plotting clustered dendrogram")
+#        scipy.cluster.hierarchy.dendrogram(linkage)
+#        plt.show()
+        cluster_assignments = scipy.cluster.hierarchy.fcluster(linkage, criterion='maxclust',
+                                                               t=self.target.total_population_1d_count)
+        log.info(str(max(cluster_assignments) - min(cluster_assignments) + 1) + " clusters formed")
+        cluster_sizes = np.bincount(cluster_assignments)[1:] # the first element of the original array is always 0
+        log.debug("Population cluster sizes: " + os.linesep + 
+                  str(cluster_sizes))
 
+        # assign populations to clusters
+        self.population_clusters_1d = [ [] for i in range(max(cluster_assignments)) ]
+        self.cluster_principal_components_1d = []
 
-        # VERIFY: there are no more of these sets than there are 1D population units
-        minimum_1d_populations = len(self.populations_1d_by_filters.keys())
-        log.debug("A total of " + str(minimum_1d_populations) + 
-                  " distinct sets of filter time constants exist among 1D populations")
-        if minimum_1d_populations > self.target.total_population_1d_count:
-            if self.modelAnalysis:
-                # set the number of available 1D populations on the target to the minimum number
-                self.target.boards[0].population_1d_count = minimum_1d_populations
-                self.target.total_population_1d_count = minimum_1d_populations
+        for i in range(len(cluster_assignments)):
+            population = self.populations[i]
+            cluster_idx = cluster_assignments[i] - 1 # our clusters start at 0
+            self.population_clusters_1d[cluster_idx].append(population)
+            population.cluster_idx = cluster_idx
+
+        # calculate the representative principal components of each cluster
+        log.info("Calculating clustered 1D principal components")
+        for cluster in self.population_clusters_1d:
+            n = len(cluster)
+            dim = cluster[0].principal_components.shape # typically (7, 1024)
+            pc_rep = np.zeros(shape=dim)
+            # calculate representative principal components by averaging clustered ones
+            for population in cluster:
+                pc_rep += population.principal_components # FIXME apparently there are complex numbers here
+
+            pc_rep *= 1.0 / n
+            # FIXME check that this is within (-2, 2)
+            self.cluster_principal_components_1d.append(pc_rep)
+
+        # calculate representative filter coefficients for each cluster
+        log.info("Collecting filter coefficients for 1D clusters")
+        self.cluster_filters_1d = []
+        for cluster in self.population_clusters_1d:
+            n = len(cluster)
+            filters = set()
+            for population in cluster:
+                for coefficient in population.filters:
+                    filters.add(coefficient)
+            # add zeros until we have at least two
+            while len(filters) < 2:
+                filters.add(0.0)
+            # if there are two now, we're done
+            if len(filters) == 2:
+                self.cluster_filters_1d.append(frozenset(filters))
             else:
-                raise NotFeasible(str(minimum_1d_populations) + 
-                                  " 1D population units are required, at minimum, to run this network."
-                                  " However, " + str(self.target.total_population_1d_count) + " 1D population units"
-                                  " are available on the specified target."
-                                  " Either choose a target with more total population units"
-                                  " or reduce the number of distinct sets of filter time constants"
-                                  " among all 1D populations."
-                                  )
+                raise NotFeasibleError(
+                    "FIXME: cluster has >2 distinct filters, deal with this case")
 
-        log.info("Grouping 2D populations by filter time constants")
-        self.populations_2d_by_filters = dict()
-        for p in self.populations:
-            if p.dimensions != 2:
-                continue
-            key = p.filters
-            if key not in self.populations_2d_by_filters:
-                self.populations_2d_by_filters[key] = []
-            self.populations_2d_by_filters[key].append(p)
+        # VERIFY: at most 1024 populations per cluster; if this is violated,
+        # move populations from over-populated clusters one at a time to the
+        # nearest (by metric) cluster with room left
+        for cluster in self.population_clusters_1d:
+            if len(cluster) > 1024:
+                raise NotFeasibleError(
+                    "FIXME: cluster has >1024 populations, implement reassignment")
 
+        # FIXME do statistics on populations vs. cluster principal components
 
-        # VERIFY: there are no more of these sets than there are 2D population units
-        minimum_2d_populations = len(self.populations_2d_by_filters.keys())
-        log.debug("A total of " + str(minimum_2d_populations) + 
-                  " distinct sets of filter time constants exist among 2D populations")
-        if minimum_2d_populations > self.target.total_population_2d_count:
-            if self.modelAnalysis:
-                # set the number of available 2D populations on the target to the minimum number
-                self.target.boards[0].population_2d_count = minimum_2d_populations
-                self.target.total_population_2d_count = minimum_2d_populations
-            else:
-                raise NotFeasible(str(minimum_2d_populations) + 
-                                  " 2D population units are required, at minimum, to run this network."
-                                  " However, " + str(self.target.total_population_2d_count) + " 2D population units"
-                                  " are available on the specified target."
-                                  " Either choose a target with more total population units"
-                                  " or reduce the number of distinct sets of filter time constants"
-                                  " among all 2D populations."
-                                  )
+        # so at this point, we have clusters of at most 1024 populations,
+        # each with at most four outgoing connections,
+        # and for each cluster, we know its filter coefficients and its principal components.
+        # the next step is to go through each outgoing connection,
+        # recompute its decoders with respect to the "correct" principal components,
+        # and assign it an address in the decoded value address space.
+        
+
+        # perform clustering of 2D populations
+
+    def population_distance(self, P1, P2):
+        return (self.weightPCDistance * principal_component_distance(P1, P2) 
+                + self.weightFilterDistance * filter_distance(P1, P2))
 
     def build_ensemble(self, ens):
         log.debug("Building ensemble " + str(ens.label))
@@ -266,8 +306,9 @@ class Builder(object):
         # outside the usual build process, which include
         # principal components and (unscaled) decoders
         log.debug("Calculating principal components")
+        # we need 1024 eval points because that's how many samples we can store in hardware
         # FIXME eval_points is slightly different for 2-dimensional populations
-        eval_points = np.matrix([np.linspace(-1.0, 1.0, num=ens.EVAL_POINTS)]).transpose()
+        eval_points = np.matrix([np.linspace(-1.0, 1.0, num=1024)]).transpose()
         activities = ens.activities(eval_points)
         u, s, v = np.linalg.svd(activities.transpose())
         if ens.dimensions == 1:
@@ -280,6 +321,7 @@ class Builder(object):
         S[:s.shape[0], :s.shape[0]] = np.diag(s)
         # extend principal components to full representable range
         # FIXME this is also different for 2-dimensional populations
+        # FIXME use the *actual* representable range as a signed 12-bit fixed point value instead of +/-2.0
         eval_points_extended = np.matrix([np.linspace(-2.0, 2.0, num=len(eval_points))]).transpose()
         activities_extended = ens.activities(eval_points_extended)
         usi = np.linalg.pinv(np.dot(u,S))
@@ -303,6 +345,7 @@ class Builder(object):
         probe.inputs = []
 
     def build_connection(self, conn):
+        log.debug("Building connection " + conn.label)
         rng = np.random.RandomState(self.model._get_new_seed())
         dt = self.model.dt
         # find out what we're connecting from
@@ -317,12 +360,12 @@ class Builder(object):
                     if targets.ndim < 2:
                         targets.shape = targets.shape[0], 1
 
-                base_decoders = conn.decoder_solver(activities, targets, rng) * dt
+                conn.base_decoders = conn.decoder_solver(activities, targets, rng) * dt
 
                 # now solve for approximate decoders wrt. principal components
                 conn._decoders = np.dot(conn.pre.pc_S[0:conn.pre.npc, 0:conn.pre.npc],
                                         np.dot(conn.pre.pc_u[:,0:conn.pre.npc].transpose(), 
-                                               base_decoders.transpose())).transpose()
+                                               conn.base_decoders.transpose())).transpose()
                 log.debug("Decoders for " + conn.label + ": " + os.linesep + str(conn.decoders))
             if conn.filter is not None and conn.filter > dt:
                 conn.o_coef, conn.n_coef = self.filter_coefs(pstc=conn.filter, dt=dt)
