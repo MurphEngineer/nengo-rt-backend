@@ -146,22 +146,25 @@ class Builder(object):
                     " distinct filter time constants among all incoming connections."
                     " The maximum number supported by this backend is 2.")
 
-            # use sets of filters instead of lists of filters in order to allow hashing,
-            # since these become the keys to a dictionary in a later step
-            population.filters = frozenset(filters)
+            population.filters = list(set(filters)) # eliminate duplicates.
 
         if self.targetFile is None:
             raise ValueError("targetFile not specified")
         else:
             # parse target file
             self.target = Target(self.targetFile)
+            if len(self.target.boards) > 1:
+                raise NotFeasibleError(
+                    "Multi-board targets not yet supported")
             log.info("Targeting device with " + str(self.target.total_population_1d_count) + 
                      " one-dimensional populations"
                      " and " + str(self.target.total_population_2d_count) + 
                      " two-dimensional populations")
 
         # FIXME: before we can do this, check the number of decoded values from each population
-        # and if there are more than four, split the population into copies until there are at most
+        # and if there are more than four
+        # (counting EACH DIMENSION as one)
+        # split the population into copies until there are at most
         # four decoded values coming from each one
 
         # perform clustering of 1D populations
@@ -245,11 +248,12 @@ class Builder(object):
                 for coefficient in population.filters:
                     filters.add(coefficient)
             # add zeros until we have at least two
+            filters = list(set(filters))
             while len(filters) < 2:
-                filters.add(0.0)
+                filters.append(0.0)
             # if there are two now, we're done
             if len(filters) == 2:
-                self.cluster_filters_1d.append(frozenset(filters))
+                self.cluster_filters_1d.append(filters)
             else:
                 raise NotFeasibleError(
                     "FIXME: cluster has >2 distinct filters, deal with this case")
@@ -295,17 +299,194 @@ class Builder(object):
                         conn._decoders *= decoder_scale_factor
                         conn.decoder_inverse_scale_factor = 1.0 / decoder_scale_factor
                     else:
-                        # decoders don't need rescaling in encoders
+                        # decoders don't need rescaling
                         conn.decoder_inverse_scale_factor = 1.0
-                    # at this point, we can correctly assign an address to this connection
-                    conn.decoded_value_addr = (N << 12) + (decoder_idx << 10) + (pop_idx)
-                    log.debug("address for cluster " + str(N) + " population " + str(pop_idx) + 
-                              " decoder " + str(decoder_idx) + 
-                              " is " + str(bin(conn.decoded_value_addr)))
-                    decoder_idx += 1
+                    # VERIFY: N < 128, D < 4, A < 1024
+                    if N >= 128:
+                        raise NotFeasibleError("Inconsistency detected: more than 128 clusters")
+                    if decoder_idx >= 4 or decoder_idx + conn.dimensions > 4 :
+                        raise NotFeasibleError("Inconsistency detected: population decodes more than 4 values")
+                    if pop_idx >= 1024:
+                        raise NotFeasibleError("Inconsistency detected: more than 1024 populations in cluster")
+                    # at this point, we can correctly assign addresses to this connection
+                    # TODO this assumes single-board targets; use different address spaces for multi-board
+                    conn.decoded_value_addrs = []                
+                    for i in range(conn.dimensions):
+                        conn.decoded_value_addrs.append( (N << 12) + (decoder_idx << 10) + (pop_idx) )
+                        decoder_idx += 1
+                    log.debug("address range for " + conn.label + " is " +
+                              str(conn.decoded_value_addrs[0]) + " to " +
+                              str(conn.decoded_value_addrs[-1]))
                 pop_idx += 1
 
         # perform clustering of 2D populations
+
+        # we have now clustered all 1D and 2D populations onto population units,
+        # assigned filter coefficients, and calculated decoders and DV addresses for
+        # all connections leaving 1D and 2D populations.
+        # we should now be ready to deal with connections leaving nodes,
+        # which are INPUTS with respect to the hardware (because the values come from the host simulation)
+        # and are OUTPUTS with respect to the nodes (because they are values provided from the nodes)
+
+        log.info("assigning input addresses to nodes")
+
+        maximum_input_count = self.target.boards[0].input_dv_count * 2048 # TODO this assumes single-board
+
+        first_input_address = (self.target.boards[0].first_input_dv_index << 11) # TODO this assumes single-board
+        input_address = first_input_address
+
+        log.debug("Input space begins at address " + str(first_input_address) + 
+                  ", maximum of " + str(maximum_input_count) + " inputs available")
+
+        for node in self.nodes:
+            if len(node.outputs) == 0:
+                # no outputs, so nothing to do
+                continue
+
+            if len(node.inputs) == 0:
+                # node is output-only, which means output is sourced from the host side.
+                # allocate it an address in input-space
+                if isinstance(node.output, (int, float)):
+                    # OPTIMIZATION: output is a constant.
+                    output_signal = [node.output]
+                    log.debug("optimizing out node " + node.label + ", constant " + str(output_signal))
+                    node.initial_value = output_signal
+                    node.output_dimensions = 1
+                    node.output_addrs = [input_address]
+                    input_address += node.output_dimensions
+                elif isinstance(node.output, complex):
+                    # OPTIMIZATION: output is a constant.
+                    # FIXME check this against what Nengo does internally.
+                    # Assuming we just treat this as a 2-D output in rectangular form.
+                    output_signal = [node.output.real, node.output.imag]
+                    log.debug("optimizing out node " + node.label + ", constant " + str(output_signal))
+                    node.initial_value = output_signal
+                    node.output_dimensions = 2
+                    node.output_addrs = [input_address, input_address+1]
+                    input_address += node.output_dimensions
+                else:
+                    # output is a function (of simulation time)
+                    # do what the default builder does to guess the dimensionality of the output:
+                    # assume the function takes 1 argument (simulation time) and call it with 0.0
+                    node.initial_value = np.asarray(node.output(0.0))
+                    node.output_dimensions = node.initial_value.size
+                    log.debug("node " + node.label + " is a state-invariant " + 
+                              str(node.output_dimensions) + "-dimensional function")
+                    node.output_addrs = []
+                    for i in range(node.output_dimensions):
+                        node.output_addrs.append(input_address)
+                        input_address += 1
+            else:
+                if node.output is None:
+                    # in this special case, Nengo says that the output is the identity function
+                    log.debug("optimizing out node " + node.label + ", identity function")
+                    # if the transform is also identity, this should be as easy as
+                    # re-mapping the addresses of incoming connections onto the outgoing ones...
+                    # FIXME
+                    raise NotImplementedError("identity-function node encountered, but optimization of this case "
+                                              "is not yet supported")
+                else:
+                    # node has both inputs and outputs
+                    # do what the default builder does to guess the dimensionality of the output:
+                    # assume the function takes 2 arguments.
+                    # the first is simulation time (try 0.0)
+                    # the second is the input state (try an array of all zeroes whose length is the input dim.)
+                    node.initial_value = np.asarray(node.output(0.0, np.zeros(node.dimensions)))
+                    node.output_dimensions = node.initial_value.size
+                    log.debug("node " + node.label + " is a " + 
+                              str(node.dimensions) + "-to-" + str(node.output_dimensions) +
+                              " host-side function")
+                    node.output_addrs = []
+                    for i in range(node.output_dimensions):
+                        node.output_addrs.append(input_address)
+                        input_address += 1
+            # now use the node's output addresses to give DV addresses to each outgoing connection
+            for conn in node.outputs:
+                conn.decoded_value_addrs = node.output_addrs
+
+        input_count = input_address - first_input_address
+        log.info("total of " + str(input_count) + " inputs in this model")
+
+        if input_count == 0:
+            log.warn("no inputs detected in this model, possible model inconsistency or optimization error")
+        elif input_count > maximum_input_count:
+            raise NotFeasibleError("model has too many inputs; attempted to assign " + str(input_count) +
+                                   " but only " + str(maximum_input_count) + " available on this target")
+        else:
+            log.debug("input address range is " + str(first_input_address) + " to " + str(input_address - 1))
+
+        # VERIFY: every connection has *some* non-empty list of decoded value addresses
+        for conn in self.connections:
+            if not hasattr(conn, "decoded_value_addrs") or len(conn.decoded_value_addrs) == 0:
+                raise NotFeasibleError("connection " + conn.label + " was not assigned decoded value addresses")
+
+        # now we can start calculating encoders.
+        # for each population in each cluster, group its incoming connections by filter time constant.
+        # assign each group to the encoder on that population unit with the closest time constant.
+
+        log.info("Calculating encoders for 1-D populations")
+        self.cluster_encoders_1d = []
+        for N in range(len(self.population_clusters_1d)):
+            cluster = self.population_clusters_1d[N]
+            filters = self.cluster_filters_1d[N] 
+            # len(filters) == 2
+            filter0 = filters[0]
+            filter1 = filters[1]
+            # each element of these arrays is an array (one per population) of tuples of the form
+            # (DV address, weight)
+            filter0_encoders = []
+            filter1_encoders = []
+            for population in cluster:
+                population_encoders_0 = []
+                population_encoders_1 = []
+                # generate encoders
+                for conn in population.inputs:
+                    connection_encoders = self.generate_connection_encoders(conn)
+                    # len(connection_encoders) == 1
+                    if abs(conn.filter - filter0) <= abs(conn.filter - filter1):
+                        for encoder in connection_encoders[0]:
+                            population_encoders_0.append(encoder)
+                    else:
+                        for encoder in connection_encoders[0]:
+                            population_encoders_1.append(encoder)
+
+                filter0_encoders.append(population_encoders_0)
+                filter1_encoders.append(population_encoders_1)
+                log.debug("population " + population.label + " encoders by filter:")
+                log.debug("encoder 0 (filter=" + str(filter0) + "):")
+                log.debug(population_encoders_0)
+                log.debug("encoder 1 (filter=" + str(filter1) + "):")
+                log.debug(population_encoders_1)
+                
+            self.cluster_encoders_1d.append( (filter0_encoders, filter1_encoders) )
+
+    # The encoder performs [DV address * transform weight] * connection inverse scale factor
+    # (where the inverse scale factor is 1.0 if it does not exist;
+    #  the purpose of that is to recover the correct decoded values when the decoders
+    #  would have been out of range)
+    def generate_connection_encoders(self, conn):
+        connection_encoders = []
+        for i in range(conn.post.dimensions):
+            encoders = []
+            decoded_value_addresses = conn.decoded_value_addrs
+            # transform[i, :] is the transform vector for the i-th dimension
+            transform_vector = conn.transform[i, :]
+            # make sure these are the same size...
+            if len(decoded_value_addresses) != len(transform_vector):
+                raise NotFeasibleError("connection " + conn.label + " associated with " + 
+                                       str(len(decoded_value_addresses)) + " decoded values and " +
+                                       str(len(transform_vector)) + " transforms; these must be equal")
+            for j in range(len(decoded_value_addresses)):
+                dv_addr = decoded_value_addresses[j]
+                weight = transform_vector[j]
+                if hasattr(conn, "decoder_inverse_scale_factor"):
+                    weight *= conn.decoder_inverse_scale_factor
+                # otherwise, don't touch the weight;
+                # this attribute won't be set for, e.g., connections leaving nodes
+                # because these connections don't have decoders
+                encoders.append( (dv_addr, weight) )
+            connection_encoders.append(encoders)
+        return connection_encoders
 
     def population_distance(self, P1, P2):
         return (self.weightPCDistance * principal_component_distance(P1, P2) 
