@@ -458,7 +458,22 @@ class Builder(object):
                 log.debug("encoder 1 (filter=" + str(filter1) + "):")
                 log.debug(population_encoders_1)
                 
-            self.cluster_encoders_1d.append( (filter0_encoders, filter1_encoders) )
+            self.cluster_encoders_1d.append( [filter0_encoders, filter1_encoders] )
+        
+        # calculate encoders for 2-D populations
+        self.cluster_encoders_2d = []
+        
+        # so, at this point, each element of self.cluster_encoders_(1|2)d
+        # is a list E that has two elements for a 1-D population unit and four elements for a 2-D population unit.
+        # these lists (E_0, E_1, E_2, E_3) contain all of the actual encoders for each population.
+        # so, up to this point, self.cluster_encoders_1d[3][1][4] is a list of encoders
+        # for population #4, using encoder #1, running on (1-D) population unit #3.
+        # the key is this: self.cluster_encoders_1d[:][:][0] gets us
+        # all encoders over all population units for the #0 population on each population unit,
+        
+
+        
+
 
     # The encoder performs [DV address * transform weight] * connection inverse scale factor
     # (where the inverse scale factor is 1.0 if it does not exist;
