@@ -6,6 +6,8 @@ import math
 #from .target import Target, Board, Output, Input, Control, IO
 from .target import Target
 
+from .scheduler import EncoderScheduler, GeneticOptimizer
+
 import os
 import logging
 import xml.etree.ElementTree as ET
@@ -471,8 +473,40 @@ class Builder(object):
         # the key is this: self.cluster_encoders_1d[:][:][0] gets us
         # all encoders over all population units for the #0 population on each population unit,
         
+        # we want to list the encoders in board address order; 
+        # if an encoder has no instructions for a given population,
+        # use a blank list. the outer loop therefore should iterate over 
+        # population units, and the inner loop over encoders
 
-        
+        log.info("starting optimization of encoder schedules")
+        self.encoder_schedules = []
+        for i in range(1024):
+            # for each timeslice (0-1023), we schedule 128 (max) population units 
+            # and 4 (max) encoders per population unit
+            schedule = [ [] ] * (128 * 4) 
+            emptySchedule = True
+            # first count 1-D populations, which start at 0
+            for cluster in range(len(self.cluster_encoders_1d)):
+                for encoder in range(4):
+                    # if this cluster doesn't use this encoder, or this cluster 
+                    # doesn't have an i-th population, don't schedule anything here
+                    if ( len(self.cluster_encoders_1d[cluster]) < encoder+1 
+                         or len(self.cluster_encoders_1d[cluster][encoder]) < i+1 ):
+                        schedule[cluster * 4 + encoder] = []
+                    else:
+                        schedule[cluster * 4 + encoder] = self.cluster_encoders_1d[cluster][encoder][i]
+                        if len(self.cluster_encoders_1d[cluster][encoder][i]) > 0:
+                            emptySchedule = False
+            # now count 2-D populations, which start at 127
+            # FIXME do this
+            # perform scheduling and add the result to self.encoder_schedules
+            if emptySchedule:
+                log.debug("ignoring empty encoder schedule in timeslice #" + str(i))
+                self.encoder_schedules.append( [] ) # FIXME check that this is okay
+            else:
+                log.debug("optimizing over timeslice #" + str(i) + "...")
+                scheduler = EncoderScheduler(schedule, GeneticOptimizer)
+                self.encoder_schedules.append( scheduler() )
 
 
     # The encoder performs [DV address * transform weight] * connection inverse scale factor
