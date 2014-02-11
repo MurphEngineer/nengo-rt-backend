@@ -483,7 +483,7 @@ class Builder(object):
         for i in range(1024):
             # for each timeslice (0-1023), we schedule 128 (max) population units 
             # and 4 (max) encoders per population unit
-            schedule = [ [] ] * (128 * 4) 
+            schedule = [ [] for i in range(128 * 4) ]
             emptySchedule = True
             # first count 1-D populations, which start at 0
             for cluster in range(len(self.cluster_encoders_1d)):

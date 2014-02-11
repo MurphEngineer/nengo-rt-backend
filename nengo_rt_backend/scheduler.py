@@ -13,6 +13,8 @@ class ScheduledRead(object):
         self.target = self.readInfo[0] >> 11 # 2^11 = 2048 addresses in each DV buffer
         # initial scheduled time
         self.time = 0
+    def __str__(self):
+        return str(self.readInfo) + "@" + str(self.time)
 
 class EncoderScheduler(object):
     def __init__(self, encoderLists, optimizer):
@@ -52,22 +54,26 @@ def objective(schedule):
     # and see if any three of them hit the same bank
     collisionPenalty = 1000
 
-    reads = [ [] ] * (max_t + 1)
+    reads = [ [] for i in range(max_t + 1) ]
+    # collect encoding operations in the list "reads", indexed by operation time
     for encoder in schedule:
         for op in encoder:
             t = op.time
             reads[t].append(op)
+    # now iterate over the list of reads, and for every set of operations taking place
+    # during the same cycle, check for target conflicts by inserting each operation
+    # into a dictionary indexed by target address
     for ops in reads:
         bank_accesses = {}
         for op in ops:
-            if op.time in bank_accesses.keys():
-                bank_accesses[op.time].append(op)
+            if op.target in bank_accesses.keys():
+                bank_accesses[op.target].append(op)
             else:
-                bank_accesses[op.time] = [op]
+                bank_accesses[op.target] = [op]
         # count number of conflicting bank accesses; if this is >2, this is bad
         for accesses in bank_accesses.values():
             if len(accesses) > 2:
-                badness += collisionPenalty * ( len(accesses) - 2)
+                badness += collisionPenalty * (len(accesses) - 2)
     return badness
 
 class BaseOptimizer(object):
@@ -141,7 +147,7 @@ class GeneticOptimizer(BaseOptimizer):
                 if challenge < best:
                     best = challenge
                     bestIdx = i
-            log.info("best schedule in this generation (#" + str(i) + ") has badness of " + str(best))
+            log.info("best schedule in this generation (#" + str(bestIdx) + ") has badness of " + str(best))
 
             # keep a copy of this solution if it is the best seen so far
             if self.best_feasible_candidate is None or best < self.best_feasible_candidate_badness:
