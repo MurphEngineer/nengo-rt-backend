@@ -89,7 +89,7 @@ class GeneticOptimizer(BaseOptimizer):
     def __init__(self):
         BaseOptimizer.__init__(self)
         # number of solutions to maintain in each generation
-        self.solutions_per_generation = 100
+        self.solutions_per_generation = 1000
         # threshold above which solutions are unacceptable
         self.threshold = 128
         # maximum number of generations before giving up
@@ -101,11 +101,11 @@ class GeneticOptimizer(BaseOptimizer):
         # individuals in previous generation (elitist replacement)
         self.pct_elitist = 0.10
         # number of competitors in tournament selection
-        self.selection_pressure = 10
+        self.selection_pressure = 15
         # probability (0-1) of a mutation affecting any given location after crossover
-        self.mutation_rate = 0.01
+        self.mutation_rate = 0.02
         # relative probability of a "stronger" mutation, i.e. taking the mutated value further from its initial one
-        self.mutation_strength = 0.10
+        self.mutation_strength = 0.05
 
         self.previous_generation = []
         self.current_generation = []
@@ -121,16 +121,10 @@ class GeneticOptimizer(BaseOptimizer):
             # start by copying the old schedule...
             candidate = copy.deepcopy(initialSchedule)
             for encoder in candidate:
-                if len(encoder) == 0:
-                    continue
-                else:
-                    # choose a random start time for the first operation
-                    t = self.rng.randint(0, self.threshold)
-                    encoder[0].time = t
-                    for op in range(1, len(encoder)):
-                        # increase t by at least 2 for each consecutive operation
-                        t += self.rng.randint(2, self.threshold)
-                        encoder[op].time = t
+                # choose a random time for all operations
+                for op in range(len(encoder)):
+                    t = self.rng.randint(0, self.threshold) # FIXME no two reads at the same time on the same encoder
+                    encoder[op].time = t
             # now put the candidate into our current generation
             self.current_generation.append(candidate)
         # now the GA can begin
@@ -143,6 +137,7 @@ class GeneticOptimizer(BaseOptimizer):
             for i in range(1, len(self.current_generation)):
                 candidate = self.current_generation[i]
                 challenge = objective(candidate)
+                log.debug("evaluating solution #" + str(i) + ", badness=" + str(challenge))
                 ranks.append(challenge)
                 if challenge < best:
                     best = challenge
@@ -164,31 +159,46 @@ class GeneticOptimizer(BaseOptimizer):
                     log.info("returning best schedule, with badness of " + str(self.best_feasible_candidate_badness))
                     return self.best_feasible_candidate
 
-            self.previous_generation = self.current_generation.copy()
+#            self.previous_generation = copy.deepcopy(self.current_generation)
+            self.previous_generation = list(self.current_generation)
             self.current_generation = []
             # draw some proportion of individuals directly from the previous generation 
             # to continue to the new generation
             elitist_ranks = ranks[:] # copy array to allow modification, in order to prevent multiple selection
-            for i in range( int(self.solutions_per_generation * self.pct_elitist)):
+            elitist_count = int(self.solutions_per_generation * self.pct_elitist)
+            log.debug("choosing " + str(elitist_count) + " elite solutions to continue")
+            for i in range(elitist_count):
                 idx = self.tournament(elitist_ranks)
+                log.debug("chose solution #" + str(idx) + " (badness=" + str(elitist_ranks[idx]) + ")")
                 elitist_ranks[idx] = None
-                individual = self.previous_generation[idx]
+                individual = copy.deepcopy(self.previous_generation[idx])
                 self.current_generation.append(individual)
+            log.debug("performing crossover")
             while len(self.current_generation) < self.solutions_per_generation:
+                log.debug(str(len(self.current_generation)) + " solutions so far, need " + 
+                          str(self.solutions_per_generation))
                 # choose two parent solutions and perform crossover to get offspring
                 # again, start by copying the array, so we can prevent multiple selection
                 parent_ranks = ranks[:]
+
                 idxParent1 = self.tournament(parent_ranks)
+                log.debug("parent 1 is #" + str(idxParent1) + " (badness=" + str(parent_ranks[idxParent1]) + ")")
                 parent_ranks[idxParent1] = None
-                parent1 = self.previous_generation[idx]
+                parent1 = self.previous_generation[idxParent1]
+
                 idxParent2 = self.tournament(parent_ranks)
+                log.debug("parent 2 is #" + str(idxParent2) + " (badness=" + str(parent_ranks[idxParent2]) + ")")
                 parent_ranks[idxParent2] = None
-                parent2 = self.previous_generation[idx]
+                parent2 = self.previous_generation[idxParent2]
+
                 # now combine parent1 and parent2 to generate new solutions
                 offspring1 = copy.deepcopy(parent1) # in practice, which parent is copied is arbitrary
                 offspring2 = copy.deepcopy(parent2) # since they both have the same instructions
                 # iterate over encoders...
+                offspring1_viable = True
+                offspring2_viable = True
                 for geneIdx in range(len(parent1)):
+                    # FIXME don't waste time on offspring already known to be inviable
                     # don't waste time if this is an empty encoder
                     if len(parent1[geneIdx]) == 0:
                         continue
@@ -205,14 +215,31 @@ class GeneticOptimizer(BaseOptimizer):
                     gene_offspring1 = self.mutation(gene_offspring1)
                     gene_offspring2 = self.mutation(gene_offspring2)
                     # now translate back to a phenotype and modify the instruction timings for the offspring
-                    times_offspring1 = self.genotypeToPhenotype(gene_offspring1)
-                    times_offspring2 = self.genotypeToPhenotype(gene_offspring2)
-                    for i in range(len(times_offspring1)):
-                        offspring1[geneIdx][i].time = times_offspring1[i]
-                        offspring2[geneIdx][i].time = times_offspring2[i]
-                    # add to list and repeat
+                    # being careful not to create a child if it would result in a totally illegal schedule
+                    # (which at this point only means that two reads are scheduled back-to-back)
+                    try:
+                        times_offspring1 = self.genotypeToPhenotype(gene_offspring1)
+                        for i in range(len(times_offspring1)):
+                            offspring1[geneIdx][i].time = times_offspring1[i]
+                    except ValueError:
+                        log.info("rejected infeasible offspring")
+                        offspring1_viable = False
+
+                    try:
+                        times_offspring2 = self.genotypeToPhenotype(gene_offspring2)
+                        for i in range(len(times_offspring2)):
+                            offspring2[geneIdx][i].time = times_offspring2[i]
+                    except ValueError:
+                        log.info("rejected infeasible offspring")
+                        offspring2_viable = False
+
+                # finally, insert the rewritten offspring into the current generation, if they are viable
+                if offspring1_viable:
                     self.current_generation.append(offspring1)
+                if offspring2_viable:
                     self.current_generation.append(offspring2)
+            log.debug("crossover complete, continuing")
+
         log.warn("generation limit reached")
         if self.best_feasible_candidate_badness > self.threshold:
             log.warn("solution does not meet threshold")
@@ -234,27 +261,24 @@ class GeneticOptimizer(BaseOptimizer):
         return best
 
     # Encode a list of ScheduledReads as a gene suitable for crossover,
-    # of the form [first time, next time-2, next time-2, ...].
-    # The (-2) ensures that all non-negative values result in a feasible solution,
-    # since read times are separated by at least two clock cycles.
+    # of the form [time 0, time 1, time 2, ...].
     def phenotypeToGenotype(self, insnlist):
         gene = []
-        if len(insnlist) > 0:
-            gene.append(insnlist[0].time)
-            for i in range(1, len(insnlist)):
-                previousTime = gene[-1]
-                gene.append(insnlist[i].time - previousTime - 2)
+        for insn in insnlist:
+            gene.append(insn.time)
         return gene
 
-    # Decode a genotype into a list of *TIMES* for ScheduledReads.
+    # Decode a genotype into a list of times for ScheduledReads.
+    # FIXME currently, this doesn't do anything due to changes to the phenotype
     def genotypeToPhenotype(self, gene):
-        times = []
-        if len(gene) > 0:
-            times.append(gene[0])
-            for i in range(1, len(gene)):
-                previousTime = times[-1]
-                times.append(2 + previousTime + gene[i])
-        return times
+        # quickly check for incorrect scheduling, i.e. two operations back to back or simultaneously
+        sortedGene = sorted(gene)
+        lastTime = -2
+        for t in gene:
+            if lastTime == t or lastTime+1 == t:
+                raise ValueError
+            lastTime = t
+        return gene
 
     def crossover(self, gene1, gene2, crossPt):
         new1 = []
