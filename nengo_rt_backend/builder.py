@@ -551,7 +551,36 @@ class Builder(object):
 
         # 0x0: Decoded Value buffers
         # 0x1: Encoder instruction buffers
+
         # 0x2: Principal Component filter characteristics
+        # call filter_coefs(pstc, dt) with the appropriate PSTC for each encoder;
+        # get this list from self.cluster_filters_1d which will be a list of length 2
+        # or self.cluster_filters_2d which will be a list of length 4
+        # the tuple returned is (A, B) and since we need C and D also, we set C=A and D=B for the filter
+        # program at address [010 NNNNNNNFF 00000000 00XX]
+        # where N is the population unit index (0-127)
+        # F is the filter index
+        # and X is the coefficient offset (A=0, B=1, C=2, D=3)
+        log.info("writing filter coefficients...")
+        for N in range(self.target.population_1d_count):
+            for F in range(2):
+                pstc = self.cluster_filters_1d[F]
+                (A, B) = self.filter_coefs(pstc, self.model.dt)
+                C = A
+                D = B
+                Nstr = pad(bin(N)[2:], '0', 7)
+                Fstr = pad(bin(F)[2:], '0', 2)
+                Astr = pad(float2sfixed(A), '0', 32)
+                Bstr = pad(float2sfixed(B), '0', 32)
+                Cstr = pad(float2sfixed(C), '0', 32)
+                Dstr = pad(float2sfixed(D), '0', 32)
+                addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
+                print(addr + "00" + ' ' + Astr, loadfile)
+                print(addr + "01" + ' ' + Bstr, loadfile)
+                print(addr + "10" + ' ' + Cstr, loadfile)
+                print(addr + "11" + ' ' + Dstr, loadfile)
+
+        # FIXME now do it for 2D population units
 
         # 0x3: Principal Component LFSRs
         # this is an easy one. we have 4 LFSRs for each population unit,
