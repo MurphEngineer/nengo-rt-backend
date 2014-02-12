@@ -11,6 +11,7 @@ from .scheduler import EncoderScheduler, GeneticOptimizer
 import os
 import logging
 import xml.etree.ElementTree as ET
+import datetime
 
 import nengo
 import nengo.decoders
@@ -53,6 +54,36 @@ def object_pdist(objs, metric):
             k += 1
     
     return dm
+
+# Prepend p to the string s until its length is at least n.
+def pad(s, p, n):
+    x = s
+    while len(x) < n:
+        x = p + x
+    return x
+
+def float2sfixed(f):
+    if f < 0:
+        sgn = "1"
+        f = f * -1
+    else:
+        sgn = "0"
+    if f >= 2.0:
+        log.warn("clamped unrepresentable value " + str(f))
+        f = 1.999 # largest representable value
+    ipart = int(floor(f))
+    fpart = int(round((f - ipart) * 2**10))
+    istr = pad(bin(ipart)[2:], "0", 1) # remove '0b' prefix and pad out
+    fstr = pad(bin(fpart)[2:], "0", 10)
+    # if the string is negative, take the 2's complement
+    if sgn == "1":
+        # take two's complement
+        n = int(istr + fstr, 2)
+        nc = 2**11 - n
+        return sgn + pad(bin(nc)[2:], "1", 11)
+    else:
+        return sgn + istr + fstr
+
 
 class ShapeMismatch(ValueError):
     pass
@@ -508,6 +539,38 @@ class Builder(object):
                 scheduler = EncoderScheduler(schedule, GeneticOptimizer)
                 self.encoder_schedules.append( scheduler() )
 
+        # At this point we should have almost everything we need to write out a loadfile.
+        timestamp = datetime.datetime.now().isoformat(sep='_')
+        self.filename = self.model.label + '-' + timestamp + '.nengo-rt'
+        log.info("writing loadfile " + self.filename + " for target")
+        loadfile = open("./" + self.filename, 'w')
+        # FIXME we assume single-board targets again 
+
+        # 0x0: Decoded Value buffers
+        # 0x1: Encoder instruction buffers
+        # 0x2: Principal Component filter characteristics
+
+        # 0x3: Principal Component LFSRs
+        # this is an easy one. we have 4 LFSRs for each population unit,
+        # so loop over their addresses and initialize them all with random 32-bit values
+        # program at address [011 00000 0000000N NNNNNNLL]
+        # where N is the population unit index (0-127)
+        # and L is the LFSR index (0-3)
+        for N in range(self.target.population_1d_count):
+            for L in range(4):
+                Nstr = pad(bin(N)[2:], '0', 7)
+                Lstr = pad(bin(L)[2:], '0', 2)
+                addr = "011" + "00000" + "0000000" + Nstr + Lstr
+                seed = self.rng.random_integers(0, 2**32 - 1)
+                seedstr = pad(bin(seed)[2:], '0', 32)
+                print(addr + ' ' + seedstr, loadfile)
+        # FIXME now do it for 2D population units
+
+        # 0x4: Principal Component lookup tables
+        # 0x5: Decoder circular buffers
+        # 0x6: Output channel instruction buffers
+        # 0x7: not used
+        loadfile.close()
 
     # The encoder performs [DV address * transform weight] * connection inverse scale factor
     # (where the inverse scale factor is 1.0 if it does not exist;

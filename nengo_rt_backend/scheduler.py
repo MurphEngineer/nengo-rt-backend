@@ -137,7 +137,6 @@ class GeneticOptimizer(BaseOptimizer):
             for i in range(1, len(self.current_generation)):
                 candidate = self.current_generation[i]
                 challenge = objective(candidate)
-                log.debug("evaluating solution #" + str(i) + ", badness=" + str(challenge))
                 ranks.append(challenge)
                 if challenge < best:
                     best = challenge
@@ -175,19 +174,15 @@ class GeneticOptimizer(BaseOptimizer):
                 self.current_generation.append(individual)
             log.debug("performing crossover")
             while len(self.current_generation) < self.solutions_per_generation:
-                log.debug(str(len(self.current_generation)) + " solutions so far, need " + 
-                          str(self.solutions_per_generation))
                 # choose two parent solutions and perform crossover to get offspring
                 # again, start by copying the array, so we can prevent multiple selection
                 parent_ranks = ranks[:]
 
                 idxParent1 = self.tournament(parent_ranks)
-                log.debug("parent 1 is #" + str(idxParent1) + " (badness=" + str(parent_ranks[idxParent1]) + ")")
                 parent_ranks[idxParent1] = None
                 parent1 = self.previous_generation[idxParent1]
 
                 idxParent2 = self.tournament(parent_ranks)
-                log.debug("parent 2 is #" + str(idxParent2) + " (badness=" + str(parent_ranks[idxParent2]) + ")")
                 parent_ranks[idxParent2] = None
                 parent2 = self.previous_generation[idxParent2]
 
@@ -222,7 +217,6 @@ class GeneticOptimizer(BaseOptimizer):
                         for i in range(len(times_offspring1)):
                             offspring1[geneIdx][i].time = times_offspring1[i]
                     except ValueError:
-                        log.info("rejected infeasible offspring")
                         offspring1_viable = False
 
                     try:
@@ -230,7 +224,6 @@ class GeneticOptimizer(BaseOptimizer):
                         for i in range(len(times_offspring2)):
                             offspring2[geneIdx][i].time = times_offspring2[i]
                     except ValueError:
-                        log.info("rejected infeasible offspring")
                         offspring2_viable = False
 
                 # finally, insert the rewritten offspring into the current generation, if they are viable
