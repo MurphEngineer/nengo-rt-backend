@@ -68,9 +68,9 @@ def float2sfixed(f):
         f = f * -1
     else:
         sgn = "0"
-    if f >= 2.0:
+    if f >= 2047.0 / 1024.0:
         log.warn("clamped unrepresentable value " + str(f))
-        f = 1.999 # largest representable value
+        f = 2047.0 / 1024.0 # largest representable value
     ipart = int(floor(f))
     fpart = int(round((f - ipart) * 2**10))
     istr = pad(bin(ipart)[2:], "0", 1) # remove '0b' prefix and pad out
@@ -540,6 +540,9 @@ class Builder(object):
                 self.encoder_schedules.append( scheduler() )
 
         # At this point we should have almost everything we need to write out a loadfile.
+
+        # FIXME this sequence of operations should probably go into a subroutine
+        # in case there are multiple formats that can be written (possibly depending on control interface type)
         timestamp = datetime.datetime.now().isoformat(sep='_')
         self.filename = self.model.label + '-' + timestamp + '.nengo-rt'
         log.info("writing loadfile " + self.filename + " for target")
@@ -556,6 +559,7 @@ class Builder(object):
         # program at address [011 00000 0000000N NNNNNNLL]
         # where N is the population unit index (0-127)
         # and L is the LFSR index (0-3)
+        log.info("writing LFSR seeds...")
         for N in range(self.target.population_1d_count):
             for L in range(4):
                 Nstr = pad(bin(N)[2:], '0', 7)
@@ -567,9 +571,41 @@ class Builder(object):
         # FIXME now do it for 2D population units
 
         # 0x4: Principal Component lookup tables
+        # this is an easy one too although there's one place where we have to be careful
+        # for 1D population units, there are 7 PCs to program.
+        # we write to 1024 addresses, converting corresponding PC values to 12-bit signed fixed point (float2sfixed).
+        # the trick is figuring out which address corresponds to which value.
+        # since the highest bit is the sign bit, addresses 0-511 correspond to values at 0.0 - 1.999,
+        # and addresses 512-1023 correspond to values at -1.999 - -0.001 (effectively).
+        # now, since we have the 1D principal components as vectors over that range,
+        # starting at the low end, really all we have to do is swap the first 512 and last 512 samples,
+        # and write that out in ascending order.
+        # for 2D population units, there are 15 PCs to program and addressing is harder. FIXME do it
+        # program at address [100 NNNNNNN PPPPAAA AAAAAAA]
+        # where N is the population unit index,
+        # P is the principal component index (0-6 for 1D, 0-14 for 2D),
+        # and A is the LUT address (0-1023)
+        log.info("writing principal component lookup tables...")
+        for N in range(self.target.population_1d_count):
+            for P in range(7):
+                pc = self.cluster_principal_components_1d[N][P]
+                for A in range(1024):
+                    if A >= 512:
+                        sample = pc[A - 512] # sample from (x < 0) side of PC
+                    else:
+                        sample = pc[A + 512] # sample from (x >= 0) side of PC
+                    Nstr = pad(bin(N)[2:], '0', 7)
+                    Pstr = pad(bin(P)[2:], '0', 4)
+                    Astr = pad(bin(A)[2:], '0', 10)
+                    addr = "100" + Nstr + Pstr + Astr
+                    sampleStr = pad(float2sfixed(sample), '0', 32)
+                    print(addr + ' ' + sampleStr, loadfile)
+        # FIXME now do it for 2D
+
         # 0x5: Decoder circular buffers
         # 0x6: Output channel instruction buffers
         # 0x7: not used
+        log.info("finished writing loadfile")
         loadfile.close()
 
     # The encoder performs [DV address * transform weight] * connection inverse scale factor
@@ -682,7 +718,8 @@ class Builder(object):
         # extend principal components to full representable range
         # FIXME this is also different for 2-dimensional populations
         # FIXME use the *actual* representable range as a signed 12-bit fixed point value instead of +/-2.0
-        eval_points_extended = np.matrix([np.linspace(-2.0, 2.0, num=len(eval_points))]).transpose()
+        eval_points_extended = np.matrix([np.linspace(-2.0, self.max_12bit_value, 
+                                                       num=len(eval_points))]).transpose()
         activities_extended = ens.activities(eval_points_extended)
         usi = np.linalg.pinv(np.dot(u,S))
         ens.principal_components = np.real(np.dot(usi[0:npc, :], activities_extended.transpose()))
