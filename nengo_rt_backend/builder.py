@@ -88,7 +88,7 @@ def float2sfixed(f):
 class ShapeMismatch(ValueError):
     pass
 
-class NotFeasible(ValueError):
+class NotFeasibleError(ValueError):
     pass
 
 class Builder(object):
@@ -550,6 +550,29 @@ class Builder(object):
         # FIXME we assume single-board targets again 
 
         # 0x0: Decoded Value buffers
+        # We can do this one by looping over all connections, which have all been assigned some
+        # list of decoded_value_addrs, and taking either their initial_value or a vector of 0s
+        # to be the starting values for the DV buffers.
+        # program at address [000 HHHHHHHH 00 LLLLLLLLLLL]
+        # where H is the high (<<11) part of the DV address and L is the low (&2^11-1) part of the DV address;
+        # the data is simply the 12-bit float2sfixed() representation of each initial value
+        log.info("writing decoded value buffer initial values...")
+        for conn in self.connections:
+            pre = conn.pre
+            if hasattr(pre, "initial_value"):
+                # write the corresponding initial value for each address
+                pass # FIXME butts
+            else:
+                # write zero for each address
+                for addr in conn.decoded_value_addrs:
+                    H = addr<<11
+                    L = addr & (2**11 - 1)
+                    Hstr = pad(bin(H)[2:], '0', 8)
+                    Lstr = pad(bin(L)[2:], '0', 11)
+                    addrStr = "000" + Hstr + "00" + Lstr
+                    data = "0"*32
+                    print(addrStr + ' ' + data, loadfile)
+
         # 0x1: Encoder instruction buffers
 
         # 0x2: Principal Component filter characteristics
