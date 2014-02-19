@@ -112,6 +112,13 @@ class Builder(object):
         self.connections = []
         self.nodes = []
         self.probes = []
+
+        # This is a list of decoded value addresses corresponding to the order in which
+        # DVs come back from the board (over Ethernet or whatever).
+        # So, the first value received goes to the first address in this list,
+        # the second goes to the next, and so on.
+        self.probe_sequence = []
+
         log.info("Collecting populations and nodes")
         for obj in self.model.objs:
             if isinstance(obj, nengo.Ensemble):
@@ -794,8 +801,56 @@ class Builder(object):
                 pop_idx += 1
 
         # FIXME now do it for 2D
-
+        
         # 0x6: Output channel instruction buffers
+        # program at address "110 00 00000000 00000000 CCCCCCC"
+        # where C is the output channel index
+        # FIXME lots of work to be done here, wrt. which decoded values go to which output channels.
+        # For now we assume that all probed signals go to output channel 0, and nothing else is output.
+        # When there are multiple output channels, scheduling will become necessary
+        # (in fact, scheduling might become more difficult because we can split reads across
+        # multiple instructions to free up a bank)
+        # The instruction word is this:
+        # |L|P|DDDDDDDD|AAAAAAAAAAA|NNNNNNNNNNN|TTTT|
+        # where L is the "last instruction" flag, P is the port,
+        # D is the DV bank address, A is the first address to read inside that DV bank,
+        # N is one less than the number of words to read (starting at A),
+        # T is one less than the number of cycles to delay (for concurrency reasons,
+        # similar to what is done with the encoders)
+        # The maximum number of instructions we can issue for each output channel is 512.
+        # We may have to schedule some "unnecessary" reads if we run out of instructions,
+        # i.e. if we care about values at addresses 0, 2, 4, 6 in the same bank,
+        # we may just issue the instruction "read addresses 0-6 in bank N" and do it in 
+        # one instruction instead of four.
+        # We'll also need to write down where to expect values we care about in the incoming frames.
+        log.info("writing output channel instruction buffers...")
+        # all probes go to channel 0 automatically
+        addrStr = "110000000000000000000000"
+        probed_addresses = set()
+        for probe in self.probes:
+            for conn in probe.inputs:
+                for addr in conn.decoded_value_addrs:
+                    probed_addresses.add(addr)
+        if len(probed_addresses) <= 512:
+            probed_addresses = list(probed_addresses)
+            # easy case: one-to-one correspondence between addresses and instructions
+            for i in range(len(probed_addresses)):
+                addr = probed_addresses[i]
+                if i == len(probed_addresses) - 1:
+                    Lstr = '1'
+                else:
+                    Lstr = '0'
+                Pstr = '0'
+                DAstr = pad(bin(addr)[2:], '0', 19)
+                Nstr = "00000000000"
+                Tstr = "0000"
+                insnStr = Lstr + Pstr + DAstr + Nstr + Tstr
+                print(addrStr + ' ' + insnStr, loadfile)
+                self.probed_sequence.append(addr)
+        else:
+            # hard case: we have to combine some reads into single instructions
+            raise NotImplementedError("more than 512 probed addresses, implement instruction selection for this case")
+
         # 0x7: not used
         log.info("finished writing loadfile")
         loadfile.close()
