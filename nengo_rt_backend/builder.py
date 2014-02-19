@@ -509,6 +509,7 @@ class Builder(object):
         # use a blank list. the outer loop therefore should iterate over 
         # population units, and the inner loop over encoders
 
+        # FIXME feasibility check: there can't be more instructions in one encoder than memory to hold them
         log.info("starting optimization of encoder schedules")
         self.encoder_schedules = []
         for i in range(1024):
@@ -561,7 +562,16 @@ class Builder(object):
             pre = conn.pre
             if hasattr(pre, "initial_value"):
                 # write the corresponding initial value for each address
-                pass # FIXME butts
+                for Q in zip(conn.decoded_value_addrs, pre.initial_value):
+                    addr = Q[0]
+                    H = addr<<11
+                    L = addr & (2**11 - 1)
+                    Hstr = pad(bin(H)[2:], '0', 8)
+                    Lstr = pad(bin(L)[2:], '0', 11)
+                    addrStr = "000" + Hstr + "00" + Lstr
+                    data = Q[1]
+                    dataStr = pad(float2sfixed(data), '0', 32)
+                    print(addrStr + ' ' + dataStr, loadfile)
             else:
                 # write zero for each address
                 for addr in conn.decoded_value_addrs:
@@ -572,8 +582,83 @@ class Builder(object):
                     addrStr = "000" + Hstr + "00" + Lstr
                     data = "0"*32
                     print(addrStr + ' ' + data, loadfile)
-
+        
         # 0x1: Encoder instruction buffers
+        # Program 40-bit instructions at "001 NNNNNNN 000000000000 EE"
+        # where N is the population unit index and E is the encoder index on that population unit
+        # Instruction format is as follows:
+        # |L|TTTTTTT|P|AAAAAAAAAAAAAAAAAAA|WWWWWWWWWWWW|
+        # where L is the 'last flag', T is the time delay, P is the port number,
+        # A is the decoded value address, and W is the weight (sfixed, 1 downto -10)
+
+        # The only really "difficult" one.
+        # There are 1024 elements in the list self.encoder_schedules
+        # Each one is either the empty list [], which means "no encoders in this timeslice",
+        # or a list T of more lists (128*4; PUs then encoders) E. 
+        # Each list E corresponds to the schedule for one encoder
+        # in this timeslice. Now, E can be empty, in which case we need to write a no-op instruction.
+        # (FIXME we can make an optimization here if the E for a certain encoder is empty in every list T;
+        # by writing no instructions the encoder will actually report "done" on every clock cycle)
+        # Our no-op is "1 0000000 1 1111111111111111111 000000000000" which should almost always be
+        # an illegal address. This makes sure the encoder finishes as quickly as possible and does not
+        # produce a result that affects the operation of other encoders or the population unit.
+        # If E is not empty, then it will contain one or more ScheduledRead objects (scheduler.py).
+        # We sort these reads by the .time attribute and then walk across the sorted list to write
+        # the instructions. The first n-1 instructions have last flag 0, and the final one has it at 1.
+        # The time delay is just .time for the first instruction, and for subsequent instructions,
+        # it is two less than the time difference between the current and previous instruction.
+        # Then we transcribe the .readInfo (DV address, weight) and .port to make an instruction
+        # and output it to the loadfile.
+        log.info("writing encoder instruction buffers...")
+        for T in range(1024):
+            schedules = self.encoder_schedules[T]
+            if schedule is []:
+                # program a no-op on every encoder
+                for N in range(128):
+                    for E in range(4):
+                        # calculate write address
+                        Nstr = pad(bin(N)[2:], '0', 7)
+                        Estr = pad(bin(E)[2:], '0', 2)
+                        addrStr = "001" + Nstr + "000000000000" + Estr
+                        insnStr = "1000000011111111111111111111000000000000"
+                        print(addrStr + ' ' + insnStr, loadfile)
+            else:
+                for N in range(128):
+                    for E in range(4):
+                        # calculate write address
+                        Nstr = pad(bin(N)[2:], '0', 7)
+                        Estr = pad(bin(E)[2:], '0', 2)
+                        addrStr = "001" + Nstr + "000000000000" + Estr
+                        schedule = schedules[N * 4 + E]
+                        if schedule is []:
+                            # program a no-op on this encoder
+                            insnStr = "1000000011111111111111111111000000000000"
+                            print(addrStr + ' ' + insnStr, loadfile)
+                        else:
+                            # sort the schedule by .time
+                            ordered_schedule = sorted(schedule, key=lambda op: op.time)
+                            for op_idx in range(len(ordered_schedule)):
+                                op = ordered_schedule[op_idx]
+                                # set (L)ast flag bit
+                                if op_idx == len(ordered_schedule)-1:
+                                    Lstr = '1'
+                                else:
+                                    Lstr = '0'
+                                # calculate relative offset only if this is not the first instruction
+                                if op_idx == 0:
+                                    T = op.time
+                                else:
+                                    T = op.time - ordered_schedule[op_idx-1] - 2
+                                # FIXME if T > 127:
+                                Tstr = pad(bin(T)[2:], '0', 7)
+                                if op.port == 1:
+                                    Pstr = '1'
+                                else:
+                                    Pstr = '0'
+                                Astr = pad(bin(op.readInfo[0])[2:], '0', 19)
+                                Wstr = float2sfixed(op.readInfo[1])
+                                insnStr = Lstr + Tstr + Pstr + Astr + Wstr
+                                print(addrStr + ' ' + insnStr, loadfile)
 
         # 0x2: Principal Component filter characteristics
         # call filter_coefs(pstc, dt) with the appropriate PSTC for each encoder;
@@ -638,7 +723,7 @@ class Builder(object):
         # P is the principal component index (0-6 for 1D, 0-14 for 2D),
         # and A is the LUT address (0-1023)
         log.info("writing principal component lookup tables...")
-        for N in range(self.target.population_1d_count):
+        for N in range(self.target.population_clusters_1d):
             for P in range(7):
                 pc = self.cluster_principal_components_1d[N][P]
                 for A in range(1024):
@@ -655,6 +740,61 @@ class Builder(object):
         # FIXME now do it for 2D
 
         # 0x5: Decoder circular buffers
+        # loop over clusters, then populations, then outgoing connections.
+        # each connection should have a ._decoders of length either 7 (1D) or 15 (2D).
+        # for the last one, corresponding to the artificial noise, send "000000010100" for now
+        # FIXME better choice of noise gain term
+        # If there are fewer than 1024 populations in any given cluster, 
+        # or if for any reason a population has fewer than the requisite number of decoders,
+        # program the remaining decoders to be all zeroes.
+        # program at address [101 NNNNNNNVV 00000000 DDDD]
+        # where N is the cluster index (0-127), V is the index of the decoded value (0-3),
+        # and D is the index of the decoder (0-15).
+        # Note that there is no field for population; this is because the target is a circular buffer.
+        log.info("writing decoder circular buffers...")
+        for N in range(len(self.population_clusters_1d)):
+            Nstr = pad(bin(N)[2:], '0', 7)
+            cluster = self.population_clusters_1d[N]
+            pop_idx = 0
+            for population in cluster:
+                decoder_idx = 0
+                for conn in population.outputs:
+                    for i in range(conn.dimensions):
+                        Vstr = pad(bin(decoder_idx)[2:], '0', 2)
+                        # new decoders: [[0], [1], [2], [3],...,[7]]
+                        decoders = conn._decoders[:, i]
+                        for D in range(7):
+                            Dstr = pad(bin(D)[2:], '0', 4)
+                            decoderStr = pad(float2sfixed(decoders[D]), '0', 32)
+                            addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
+                            print(addrStr + ' ' + decoderStr, loadfile)
+                        # write decoder 8 = "000000010100"
+                        print("101" + Nstr + Vstr + "00000000" + "1000" + ' ' + 
+                              pad("000000010100", '0', 32), loadfile)
+                        decoder_idx += 1
+                while decoder_idx < 4:
+                    Vstr = pad(bin(decoder_idx)[2:], '0', 2)
+                    # program a fake decoded value with all-zeroes decoders
+                    for D in range(8):
+                        Dstr = pad(bin(D)[2:], '0', 4)
+                        decoderStr = pad('0', '0', 32)
+                        addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
+                        print(addrStr + ' ' + decoderStr, loadfile)
+                    decoder_idx += 1
+                pop_idx += 1
+            while pop_idx < 1024:
+                # program a fake population with all-zeroes decoders
+                for decoder_idx in range(4):
+                    Vstr = pad(bin(decoder_idx)[2:], '0', 2)
+                    for D in range(8):
+                        Dstr = pad(bin(D)[2:], '0', 4)
+                        decoderStr = pad('0', '0', 32)
+                        addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
+                        print(addrStr + ' ' + decoderStr, loadfile)
+                pop_idx += 1
+
+        # FIXME now do it for 2D
+
         # 0x6: Output channel instruction buffers
         # 0x7: not used
         log.info("finished writing loadfile")

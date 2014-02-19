@@ -11,6 +11,8 @@ class ScheduledRead(object):
         self.readInfo = readInfo
         # targeted DV buffer
         self.target = self.readInfo[0] >> 11 # 2^11 = 2048 addresses in each DV buffer
+        # target read port for concurrent access
+        self.port = 0
         # initial scheduled time
         self.time = 0
     def __str__(self):
@@ -49,6 +51,10 @@ def objective(schedule):
                 max_t = op.time
 
     badness += max_t
+
+    # FIXME we also want to penalize reads that are more than 128 cycles apart,
+    # since that requires issuing an extra instruction to "pad" the time delay
+
     # we also want to be minimizing the number of read conflicts
     # (in fact, we'd like it to be 0) so we need to collect all reads made in each timestep
     # and see if any three of them hit the same bank
@@ -74,6 +80,10 @@ def objective(schedule):
         for accesses in bank_accesses.values():
             if len(accesses) > 2:
                 badness += collisionPenalty * (len(accesses) - 2)
+            else:
+                # assign ports
+                for p in range(len(accesses)):
+                    accesses[p].port = p # should work
     return badness
 
 class BaseOptimizer(object):
