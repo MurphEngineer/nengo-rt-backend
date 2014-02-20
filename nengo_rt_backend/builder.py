@@ -71,7 +71,7 @@ def float2sfixed(f):
     if f >= 2047.0 / 1024.0:
         log.warn("clamped unrepresentable value " + str(f))
         f = 2047.0 / 1024.0 # largest representable value
-    ipart = int(floor(f))
+    ipart = int(math.floor(f))
     fpart = int(round((f - ipart) * 2**10))
     istr = pad(bin(ipart)[2:], "0", 1) # remove '0b' prefix and pad out
     fstr = pad(bin(fpart)[2:], "0", 10)
@@ -326,6 +326,7 @@ class Builder(object):
             for population in cluster:
                 decoder_idx = 0
                 for conn in population.outputs:
+                    conn._decoders = np.real(conn._decoders)
                     # (PC * decoder) = (PC * scale factor * 1/scale factor * decoder)
                     # = (PC * scale_factor) * (1/scale factor * decoder);
                     # adjust conn._decoders by 1/scale factor
@@ -578,7 +579,7 @@ class Builder(object):
                     addrStr = "000" + Hstr + "00" + Lstr
                     data = Q[1]
                     dataStr = pad(float2sfixed(data), '0', 32)
-                    print(addrStr + ' ' + dataStr, loadfile)
+                    print(addrStr + ' ' + dataStr, file=loadfile)
             else:
                 # write zero for each address
                 for addr in conn.decoded_value_addrs:
@@ -588,7 +589,7 @@ class Builder(object):
                     Lstr = pad(bin(L)[2:], '0', 11)
                     addrStr = "000" + Hstr + "00" + Lstr
                     data = "0"*32
-                    print(addrStr + ' ' + data, loadfile)
+                    print(addrStr + ' ' + data, file=loadfile)
         
         # 0x1: Encoder instruction buffers
         # Program 40-bit instructions at "001 NNNNNNN 000000000000 EE"
@@ -619,7 +620,7 @@ class Builder(object):
         log.info("writing encoder instruction buffers...")
         for T in range(1024):
             schedules = self.encoder_schedules[T]
-            if schedule is []:
+            if schedules is []:
                 # program a no-op on every encoder
                 for N in range(128):
                     for E in range(4):
@@ -628,7 +629,7 @@ class Builder(object):
                         Estr = pad(bin(E)[2:], '0', 2)
                         addrStr = "001" + Nstr + "000000000000" + Estr
                         insnStr = "1000000011111111111111111111000000000000"
-                        print(addrStr + ' ' + insnStr, loadfile)
+                        print(addrStr + ' ' + insnStr, file=loadfile)
             else:
                 for N in range(128):
                     for E in range(4):
@@ -636,11 +637,14 @@ class Builder(object):
                         Nstr = pad(bin(N)[2:], '0', 7)
                         Estr = pad(bin(E)[2:], '0', 2)
                         addrStr = "001" + Nstr + "000000000000" + Estr
-                        schedule = schedules[N * 4 + E]
+                        if len(schedules) > N*4+E:
+                            schedule = schedules[N * 4 + E]
+                        else:
+                            schedule = []
                         if schedule is []:
                             # program a no-op on this encoder
                             insnStr = "1000000011111111111111111111000000000000"
-                            print(addrStr + ' ' + insnStr, loadfile)
+                            print(addrStr + ' ' + insnStr, file=loadfile)
                         else:
                             # sort the schedule by .time
                             ordered_schedule = sorted(schedule, key=lambda op: op.time)
@@ -655,7 +659,7 @@ class Builder(object):
                                 if op_idx == 0:
                                     T = op.time
                                 else:
-                                    T = op.time - ordered_schedule[op_idx-1] - 2
+                                    T = op.time - ordered_schedule[op_idx-1].time - 2
                                 # FIXME if T > 127:
                                 Tstr = pad(bin(T)[2:], '0', 7)
                                 if op.port == 1:
@@ -665,7 +669,7 @@ class Builder(object):
                                 Astr = pad(bin(op.readInfo[0])[2:], '0', 19)
                                 Wstr = float2sfixed(op.readInfo[1])
                                 insnStr = Lstr + Tstr + Pstr + Astr + Wstr
-                                print(addrStr + ' ' + insnStr, loadfile)
+                                print(addrStr + ' ' + insnStr, file=loadfile)
 
         # 0x2: Principal Component filter characteristics
         # call filter_coefs(pstc, dt) with the appropriate PSTC for each encoder;
@@ -677,9 +681,9 @@ class Builder(object):
         # F is the filter index
         # and X is the coefficient offset (A=0, B=1, C=2, D=3)
         log.info("writing filter coefficients...")
-        for N in range(self.target.population_1d_count):
+        for N in range(self.target.total_population_1d_count):
             for F in range(2):
-                pstc = self.cluster_filters_1d[F]
+                pstc = self.cluster_filters_1d[N][F]
                 (A, B) = self.filter_coefs(pstc, self.model.dt)
                 C = A
                 D = B
@@ -690,10 +694,10 @@ class Builder(object):
                 Cstr = pad(float2sfixed(C), '0', 32)
                 Dstr = pad(float2sfixed(D), '0', 32)
                 addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
-                print(addr + "00" + ' ' + Astr, loadfile)
-                print(addr + "01" + ' ' + Bstr, loadfile)
-                print(addr + "10" + ' ' + Cstr, loadfile)
-                print(addr + "11" + ' ' + Dstr, loadfile)
+                print(addr + "00" + ' ' + Astr, file=loadfile)
+                print(addr + "01" + ' ' + Bstr, file=loadfile)
+                print(addr + "10" + ' ' + Cstr, file=loadfile)
+                print(addr + "11" + ' ' + Dstr, file=loadfile)
 
         # FIXME now do it for 2D population units
 
@@ -704,14 +708,14 @@ class Builder(object):
         # where N is the population unit index (0-127)
         # and L is the LFSR index (0-3)
         log.info("writing LFSR seeds...")
-        for N in range(self.target.population_1d_count):
+        for N in range(self.target.total_population_1d_count):
             for L in range(4):
                 Nstr = pad(bin(N)[2:], '0', 7)
                 Lstr = pad(bin(L)[2:], '0', 2)
                 addr = "011" + "00000" + "0000000" + Nstr + Lstr
-                seed = self.rng.random_integers(0, 2**32 - 1)
+                seed = np.random.random_integers(0, 2**32 - 1)
                 seedstr = pad(bin(seed)[2:], '0', 32)
-                print(addr + ' ' + seedstr, loadfile)
+                print(addr + ' ' + seedstr, file=loadfile)
         # FIXME now do it for 2D population units
 
         # 0x4: Principal Component lookup tables
@@ -730,20 +734,20 @@ class Builder(object):
         # P is the principal component index (0-6 for 1D, 0-14 for 2D),
         # and A is the LUT address (0-1023)
         log.info("writing principal component lookup tables...")
-        for N in range(self.target.population_clusters_1d):
+        for N in range(len(self.population_clusters_1d)):
             for P in range(7):
                 pc = self.cluster_principal_components_1d[N][P]
                 for A in range(1024):
                     if A >= 512:
-                        sample = pc[A - 512] # sample from (x < 0) side of PC
+                        sample = pc[0, A - 512] # sample from (x < 0) side of PC
                     else:
-                        sample = pc[A + 512] # sample from (x >= 0) side of PC
+                        sample = pc[0, A + 512] # sample from (x >= 0) side of PC
                     Nstr = pad(bin(N)[2:], '0', 7)
                     Pstr = pad(bin(P)[2:], '0', 4)
                     Astr = pad(bin(A)[2:], '0', 10)
                     addr = "100" + Nstr + Pstr + Astr
                     sampleStr = pad(float2sfixed(sample), '0', 32)
-                    print(addr + ' ' + sampleStr, loadfile)
+                    print(addr + ' ' + sampleStr, file=loadfile)
         # FIXME now do it for 2D
 
         # 0x5: Decoder circular buffers
@@ -769,15 +773,16 @@ class Builder(object):
                     for i in range(conn.dimensions):
                         Vstr = pad(bin(decoder_idx)[2:], '0', 2)
                         # new decoders: [[0], [1], [2], [3],...,[7]]
-                        decoders = conn._decoders[:, i]
+                        decoders = conn._decoders
                         for D in range(7):
                             Dstr = pad(bin(D)[2:], '0', 4)
-                            decoderStr = pad(float2sfixed(decoders[D]), '0', 32)
+                            decoder = decoders[0, D]
+                            decoderStr = pad(float2sfixed(decoder), '0', 32)
                             addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
-                            print(addrStr + ' ' + decoderStr, loadfile)
+                            print(addrStr + ' ' + decoderStr, file=loadfile)
                         # write decoder 8 = "000000010100"
                         print("101" + Nstr + Vstr + "00000000" + "1000" + ' ' + 
-                              pad("000000010100", '0', 32), loadfile)
+                              pad("000000010100", '0', 32), file=loadfile)
                         decoder_idx += 1
                 while decoder_idx < 4:
                     Vstr = pad(bin(decoder_idx)[2:], '0', 2)
@@ -786,7 +791,7 @@ class Builder(object):
                         Dstr = pad(bin(D)[2:], '0', 4)
                         decoderStr = pad('0', '0', 32)
                         addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
-                        print(addrStr + ' ' + decoderStr, loadfile)
+                        print(addrStr + ' ' + decoderStr, file=loadfile)
                     decoder_idx += 1
                 pop_idx += 1
             while pop_idx < 1024:
@@ -797,7 +802,7 @@ class Builder(object):
                         Dstr = pad(bin(D)[2:], '0', 4)
                         decoderStr = pad('0', '0', 32)
                         addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
-                        print(addrStr + ' ' + decoderStr, loadfile)
+                        print(addrStr + ' ' + decoderStr, file=loadfile)
                 pop_idx += 1
 
         # FIXME now do it for 2D
@@ -845,8 +850,8 @@ class Builder(object):
                 Nstr = "00000000000"
                 Tstr = "0000"
                 insnStr = Lstr + Pstr + DAstr + Nstr + Tstr
-                print(addrStr + ' ' + insnStr, loadfile)
-                self.probed_sequence.append(addr)
+                print(addrStr + ' ' + insnStr, file=loadfile)
+                self.probe_sequence.append(addr)
         else:
             # hard case: we have to combine some reads into single instructions
             raise NotImplementedError("more than 512 probed addresses, implement instruction selection for this case")

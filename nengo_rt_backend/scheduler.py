@@ -33,7 +33,17 @@ class EncoderScheduler(object):
             self.encoderSchedule.append(schedule)
 
     def __call__(self):
-        return self.optimizer(self.encoderSchedule)
+        operationCount = 0
+        for encoder in self.encoderSchedule:
+            for op in encoder:
+                operationCount += 1
+        if operationCount <= 128:
+            log.info("trivial schedule")
+            tOpt = TrivialOptimizer()
+            return tOpt(self.encoderSchedule)
+        else:
+            log.info("non-trivial schedule")
+            return self.optimizer(self.encoderSchedule)
 
 # Objective function for schedules:
 # Given a schedule, return a value that is proportional
@@ -93,7 +103,25 @@ class BaseOptimizer(object):
     def __call__(self, initialSchedule):
         raise NotImplementedException("Optimizer must implement __call__")
     
+# A simple optimizer that doesn't do anything interesting at all.
+# It simply takes all the instructions in its schedule and creates a serial ordering
+# with no concurrency. This is only guaranteed to be correct when there are fewer than 128 instructions
+# in the schedule; however, it is the fastest and easiest way to optimize such schedules. 
+class TrivialOptimizer(BaseOptimizer):
+    def __init__(self):
+        BaseOptimizer.__init__(self)
 
+    def __call__(self, initialSchedule):
+        log.info("using TrivialOptimizer")
+        newSchedule = copy.deepcopy(initialSchedule)
+        operationCount = 0
+        for encoder in newSchedule:
+            for op in encoder:
+                op.time = operationCount
+                operationCount += 1
+        if operationCount > 128:
+            log.warn(">128 operations in this schedule, correctness of TrivialOptimizer unlikely")
+        return newSchedule
 
 class GeneticOptimizer(BaseOptimizer):
     def __init__(self):
