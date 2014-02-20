@@ -572,7 +572,7 @@ class Builder(object):
                 # write the corresponding initial value for each address
                 for Q in zip(conn.decoded_value_addrs, pre.initial_value):
                     addr = Q[0]
-                    H = addr<<11
+                    H = addr>>11
                     L = addr & (2**11 - 1)
                     Hstr = pad(bin(H)[2:], '0', 8)
                     Lstr = pad(bin(L)[2:], '0', 11)
@@ -583,7 +583,7 @@ class Builder(object):
             else:
                 # write zero for each address
                 for addr in conn.decoded_value_addrs:
-                    H = addr<<11
+                    H = addr>>11
                     L = addr & (2**11 - 1)
                     Hstr = pad(bin(H)[2:], '0', 8)
                     Lstr = pad(bin(L)[2:], '0', 11)
