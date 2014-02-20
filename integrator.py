@@ -23,7 +23,7 @@ A = []
 tau = 0.1
 
 for i in range(64):
-    Ai = nengo.Ensemble(nengo.LIF(100, tau_rc=0.02 + 0.01*i, tau_ref=0.002),
+    Ai = nengo.Ensemble(nengo.LIF(100, tau_rc=0.02, tau_ref=0.002),
                         dimensions=1, label='Integrator ' + str(i))
     A.append(Ai)
     nengo.Connection(A[i], A[i], transform=[[1]], filter=tau)

@@ -578,7 +578,7 @@ class Builder(object):
                     Lstr = pad(bin(L)[2:], '0', 11)
                     addrStr = "000" + Hstr + "00" + Lstr
                     data = Q[1]
-                    dataStr = pad(float2sfixed(data), '0', 32)
+                    dataStr = pad(float2sfixed(data), '0', 40)
                     print(addrStr + ' ' + dataStr, file=loadfile)
             else:
                 # write zero for each address
@@ -588,7 +588,7 @@ class Builder(object):
                     Hstr = pad(bin(H)[2:], '0', 8)
                     Lstr = pad(bin(L)[2:], '0', 11)
                     addrStr = "000" + Hstr + "00" + Lstr
-                    data = "0"*32
+                    data = "0"*40
                     print(addrStr + ' ' + data, file=loadfile)
         
         # 0x1: Encoder instruction buffers
@@ -689,10 +689,10 @@ class Builder(object):
                 D = B
                 Nstr = pad(bin(N)[2:], '0', 7)
                 Fstr = pad(bin(F)[2:], '0', 2)
-                Astr = pad(float2sfixed(A), '0', 32)
-                Bstr = pad(float2sfixed(B), '0', 32)
-                Cstr = pad(float2sfixed(C), '0', 32)
-                Dstr = pad(float2sfixed(D), '0', 32)
+                Astr = pad(float2sfixed(A), '0', 40)
+                Bstr = pad(float2sfixed(B), '0', 40)
+                Cstr = pad(float2sfixed(C), '0', 40)
+                Dstr = pad(float2sfixed(D), '0', 40)
                 addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
                 print(addr + "00" + ' ' + Astr, file=loadfile)
                 print(addr + "01" + ' ' + Bstr, file=loadfile)
@@ -714,7 +714,7 @@ class Builder(object):
                 Lstr = pad(bin(L)[2:], '0', 2)
                 addr = "011" + "00000" + "0000000" + Nstr + Lstr
                 seed = np.random.random_integers(0, 2**32 - 1)
-                seedstr = pad(bin(seed)[2:], '0', 32)
+                seedstr = pad(bin(seed)[2:], '0', 40)
                 print(addr + ' ' + seedstr, file=loadfile)
         # FIXME now do it for 2D population units
 
@@ -746,7 +746,7 @@ class Builder(object):
                     Pstr = pad(bin(P)[2:], '0', 4)
                     Astr = pad(bin(A)[2:], '0', 10)
                     addr = "100" + Nstr + Pstr + Astr
-                    sampleStr = pad(float2sfixed(sample), '0', 32)
+                    sampleStr = pad(float2sfixed(sample), '0', 40)
                     print(addr + ' ' + sampleStr, file=loadfile)
         # FIXME now do it for 2D
 
@@ -777,19 +777,19 @@ class Builder(object):
                         for D in range(7):
                             Dstr = pad(bin(D)[2:], '0', 4)
                             decoder = decoders[0, D]
-                            decoderStr = pad(float2sfixed(decoder), '0', 32)
+                            decoderStr = pad(float2sfixed(decoder), '0', 40)
                             addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
                             print(addrStr + ' ' + decoderStr, file=loadfile)
                         # write decoder 8 = "000000010100"
                         print("101" + Nstr + Vstr + "00000000" + "1000" + ' ' + 
-                              pad("000000010100", '0', 32), file=loadfile)
+                              pad("000000010100", '0', 40), file=loadfile)
                         decoder_idx += 1
                 while decoder_idx < 4:
                     Vstr = pad(bin(decoder_idx)[2:], '0', 2)
                     # program a fake decoded value with all-zeroes decoders
                     for D in range(8):
                         Dstr = pad(bin(D)[2:], '0', 4)
-                        decoderStr = pad('0', '0', 32)
+                        decoderStr = pad('0', '0', 40)
                         addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
                         print(addrStr + ' ' + decoderStr, file=loadfile)
                     decoder_idx += 1
@@ -800,7 +800,7 @@ class Builder(object):
                     Vstr = pad(bin(decoder_idx)[2:], '0', 2)
                     for D in range(8):
                         Dstr = pad(bin(D)[2:], '0', 4)
-                        decoderStr = pad('0', '0', 32)
+                        decoderStr = pad('0', '0', 40)
                         addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
                         print(addrStr + ' ' + decoderStr, file=loadfile)
                 pop_idx += 1
@@ -849,7 +849,7 @@ class Builder(object):
                 DAstr = pad(bin(addr)[2:], '0', 19)
                 Nstr = "00000000000"
                 Tstr = "0000"
-                insnStr = Lstr + Pstr + DAstr + Nstr + Tstr
+                insnStr = pad(Lstr + Pstr + DAstr + Nstr + Tstr, '0', 40)
                 print(addrStr + ' ' + insnStr, file=loadfile)
                 self.probe_sequence.append(addr)
         else:
