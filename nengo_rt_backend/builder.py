@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 import datetime
 
 import nengo
+import nengo.builder
 import nengo.decoders
 import nengo.nonlinearities
 
@@ -103,7 +104,9 @@ class Builder(object):
         if dt != 0.001:
             raise ValueError("Timestep must be 0.001 for this backend")
 
-        self.model = model
+        # attempt to call the default Nengo builder on the model.
+        builder = nengo.builder.Builder(copy=True)
+        self.model = builder(model, dt)
         self.model.dt = dt
         if self.model.seed is None:
             self.model.seed = np.random.randint(np.iinfo(np.int32).max)
@@ -906,24 +909,24 @@ class Builder(object):
             ens.seed = self.model._get_new_seed()
         rng = np.random.RandomState(ens.seed)
             
-        if ens.eval_points is None:
-            ens.eval_points = nengo.decoders.sample_hypersphere(
-                ens.dimensions, ens.EVAL_POINTS, rng) * ens.radius
-        else:
-            ens.eval_points = np.array(ens.eval_points, dtype=np.float64)
-            if ens.eval_points.ndim == 1:
-                ens.eval_points.shape = (-1, 1)
+#        if ens.eval_points is None:
+#            ens.eval_points = nengo.decoders.sample_hypersphere(
+#                ens.dimensions, ens.EVAL_POINTS, rng) * ens.radius
+#        else:
+#            ens.eval_points = np.array(ens.eval_points, dtype=np.float64)
+#            if ens.eval_points.ndim == 1:
+#                ens.eval_points.shape = (-1, 1)
 
-        if ens.neurons.gain is None or ens.neurons.bias is None:
+#        if ens.neurons.gain is None or ens.neurons.bias is None:
             # if max_rates and intercepts are distributions,
             # turn them into fixed samples
-            if hasattr(ens.max_rates, 'sample'):
-                ens.max_rates = ens.max_rates.sample(
-                    ens.neurons.n_neurons, rng=rng)
-            if hasattr(ens.intercepts, 'sample'):
-                ens.intercepts = ens.intercepts.sample(
-                    ens.neurons.n_neurons, rng=rng)
-            ens.neurons.set_gain_bias(ens.max_rates, ens.intercepts)
+#            if hasattr(ens.max_rates, 'sample'):
+#                ens.max_rates = ens.max_rates.sample(
+#                    ens.neurons.n_neurons, rng=rng)
+#            if hasattr(ens.intercepts, 'sample'):
+#                ens.intercepts = ens.intercepts.sample(
+#                    ens.neurons.n_neurons, rng=rng)
+#            ens.neurons.set_gain_bias(ens.max_rates, ens.intercepts)
 
         # build ens.neurons
         if ens.neurons.n_neurons <= 0:
@@ -931,24 +934,24 @@ class Builder(object):
                 'Number of neurons (%d) must be non-negative' % ens.neurons.n_neurons)
 
         # Set up encoders
-        if ens.encoders is None:
-            ens.encoders = ens.neurons.default_encoders(ens.dimensions, rng)
-        else:
-            ens.encoders = np.array(ens.encoders, dtype=np.float64)
-            enc_shape = (ens.neurons.n_neurons, ens.dimensions)
-            if ens.encoders.shape != enc_shape:
-                raise ShapeMismatch(
-                    "Encoder shape is %s. Should be (n_neurons, dimensions);"
-                    "in this case %s." % (ens.encoders.shape, enc_shape))
+#        if ens.encoders is None:
+#            ens.encoders = ens.neurons.default_encoders(ens.dimensions, rng)
+#        else:
+#            ens.encoders = np.array(ens.encoders, dtype=np.float64)
+#            enc_shape = (ens.neurons.n_neurons, ens.dimensions)
+#            if ens.encoders.shape != enc_shape:
+#                raise ShapeMismatch(
+#                    "Encoder shape is %s. Should be (n_neurons, dimensions);"
+#                    "in this case %s." % (ens.encoders.shape, enc_shape))
 
-            norm = np.sum(ens.encoders * ens.encoders, axis=1)[:, np.newaxis]
-            ens.encoders /= np.sqrt(norm)
+#            norm = np.sum(ens.encoders * ens.encoders, axis=1)[:, np.newaxis]
+#            ens.encoders /= np.sqrt(norm)
 
-        if isinstance(ens.neurons, nengo.Direct):
-            ens._scaled_encoders = ens.encoders
-        else:
-            ens._scaled_encoders = ens.encoders * (
-                ens.neurons.gain / ens.radius)[:, np.newaxis]
+#        if isinstance(ens.neurons, nengo.Direct):
+#            ens._scaled_encoders = ens.encoders
+#        else:
+#            ens._scaled_encoders = ens.encoders * (
+#                ens.neurons.gain / ens.radius)[:, np.newaxis]
         
         # the second half calculates hardware-specific things
         # outside the usual build process, which include
@@ -956,7 +959,9 @@ class Builder(object):
         log.debug("Calculating principal components")
         # we need 1024 eval points because that's how many samples we can store in hardware
         # FIXME eval_points is slightly different for 2-dimensional populations
-        eval_points = np.matrix([np.linspace(-1.0, 1.0, num=1024)]).transpose()
+        #eval_points = np.matrix([np.linspace(-1.0, 1.0, num=1024)]).transpose()
+        eval_points = np.array([np.linspace(-1.0, 1.0, 
+                                             num=len(ens.eval_points))]).transpose()
         activities = ens.activities(eval_points)
         u, s, v = np.linalg.svd(activities.transpose())
         if ens.dimensions == 1:
@@ -970,7 +975,7 @@ class Builder(object):
         # extend principal components to full representable range
         # FIXME this is also different for 2-dimensional populations
         # FIXME use the *actual* representable range as a signed 12-bit fixed point value instead of +/-2.0
-        eval_points_extended = np.matrix([np.linspace(-2.0, self.max_12bit_value, 
+        eval_points_extended = np.array([np.linspace(-2.0, self.max_12bit_value, 
                                                        num=len(eval_points))]).transpose()
         activities_extended = ens.activities(eval_points_extended)
         usi = np.linalg.pinv(np.dot(u,S))
