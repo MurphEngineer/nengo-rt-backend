@@ -334,8 +334,8 @@ class Builder(object):
                     # = (PC * scale_factor) * (1/scale factor * decoder);
                     # adjust conn._decoders by 1/scale factor
                     conn._decoders /= scale_factor
-                    log.debug("new decoders for " + conn.label + ": " + str(conn.decoders))
-                    decoders_max = np.absolute(conn.decoders).max()
+                    log.debug("new decoders for " + conn.label + ": " + str(conn._decoders))
+                    decoders_max = np.absolute(conn._decoders).max()
                     if decoders_max > self.max_12bit_value:
                         log.warn("decoders for " + conn.label + " out of range (" + str(decoders_max) +
                                  "), rescaling")
@@ -390,7 +390,7 @@ class Builder(object):
             if len(node.inputs) == 0:
                 # node is output-only, which means output is sourced from the host side.
                 # allocate it an address in input-space
-                if isinstance(node.output, (int, float)):
+                if isinstance(node.output, (int, float)): # FIXME extend this to arrays of these
                     # OPTIMIZATION: output is a constant.
                     output_signal = [node.output]
                     log.debug("optimizing out node " + node.label + ", constant " + str(output_signal))
@@ -412,7 +412,9 @@ class Builder(object):
                     # output is a function (of simulation time)
                     # do what the default builder does to guess the dimensionality of the output:
                     # assume the function takes 1 argument (simulation time) and call it with 0.0
-                    node.initial_value = np.asarray(node.output(0.0))
+                    node.initial_value = node.output(0.0)
+                    if node.initial_value.ndim == 0:
+                        node.initial_value = np.asarray([node.initial_value])
                     node.output_dimensions = node.initial_value.size
                     log.debug("node " + node.label + " is a state-invariant " + 
                               str(node.output_dimensions) + "-dimensional function")
@@ -435,7 +437,9 @@ class Builder(object):
                     # assume the function takes 2 arguments.
                     # the first is simulation time (try 0.0)
                     # the second is the input state (try an array of all zeroes whose length is the input dim.)
-                    node.initial_value = np.asarray(node.output(0.0, np.zeros(node.dimensions)))
+                    node.initial_value = node.output(0.0, np.zeros(node.dimensions))
+                    if node.initial_value.ndim == 0:
+                        node.initial_value = np.asarray([node.initial_value])
                     node.output_dimensions = node.initial_value.size
                     log.debug("node " + node.label + " is a " + 
                               str(node.dimensions) + "-to-" + str(node.output_dimensions) +
@@ -961,7 +965,7 @@ class Builder(object):
         # FIXME eval_points is slightly different for 2-dimensional populations
         #eval_points = np.matrix([np.linspace(-1.0, 1.0, num=1024)]).transpose()
         eval_points = np.array([np.linspace(-1.0, 1.0, 
-                                             num=len(ens.eval_points))]).transpose()
+                                             num=1024)]).transpose()
         activities = ens.activities(eval_points)
         u, s, v = np.linalg.svd(activities.transpose())
         if ens.dimensions == 1:
@@ -1005,29 +1009,33 @@ class Builder(object):
         # find out what we're connecting from
         if isinstance(conn.pre, nengo.Ensemble): # FIXME direct mode?
             if conn._decoders is None:
-                activities = conn.pre.activities(conn.eval_points) * dt
-                if conn.function is None:
-                    targets = conn.eval_points
-                else:
-                    targets = np.array(
-                        [conn.function(ep) for ep in conn.eval_points])
-                    if targets.ndim < 2:
-                        targets.shape = targets.shape[0], 1
+               activities = conn.pre.activities(conn.eval_points) * dt
+               if conn.function is None:
+                   targets = conn.eval_points
+               else:
+                   targets = np.array(
+                       [conn.function(ep) for ep in conn.eval_points])
+                   if targets.ndim < 2:
+                       targets.shape = targets.shape[0], 1
 
-                conn.base_decoders = conn.decoder_solver(activities, targets, rng) * dt
+               conn.base_decoders = conn.decoder_solver(activities, targets, rng) * dt
 
-                # to solve for approximate decoders wrt. principal components:
-                conn._decoders = np.dot(conn.pre.pc_S[0:conn.pre.npc, 0:conn.pre.npc],
+               # to solve for approximate decoders wrt. principal components:
+               conn._decoders = np.dot(conn.pre.pc_S[0:conn.pre.npc, 0:conn.pre.npc],
                                         np.dot(conn.pre.pc_u[:,0:conn.pre.npc].transpose(), 
                                                conn.base_decoders.transpose())).transpose()
-                log.debug("Decoders for " + conn.label + ": " + os.linesep + str(conn.decoders))
+               log.debug("Decoders for " + conn.label + ": " + os.linesep + str(conn._decoders))
             if conn.filter is not None and conn.filter > dt:
                 conn.o_coef, conn.n_coef = self.filter_coefs(pstc=conn.filter, dt=dt)
             else:
                 conn.filter = 0.0 # FIXME check this
                 conn.o_coef, conn.n_coef = 0.0, 1.0 # FIXME check these
+        elif isinstance(conn.pre, nengo.Node):
+            pass # this is not a decoded connection
         else:
-            pass # FIXME
+            # FIXME
+            raise NotImplementedError("attempt to connect from unsupported object '" 
+                                      + type(conn.pre).__name__ + "'")
         
         conn.transform = np.asarray(conn.transform, dtype=np.float64)
         if isinstance(conn.post, nengo.nonlinearities.Neurons):
