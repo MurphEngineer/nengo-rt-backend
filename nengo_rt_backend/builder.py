@@ -796,7 +796,7 @@ class Builder(object):
                         decoders = conn._decoders
                         for D in range(7):
                             Dstr = pad(bin(D)[2:], '0', 4)                            
-                            decoder = decoders[D, 0]
+                            decoder = decoders[0, D]
                             decoderStr = pad(float2sfixed(decoder), '0', 40)
                             addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
                             print(addrStr + ' ' + decoderStr, file=loadfile)
@@ -1020,24 +1020,23 @@ class Builder(object):
         rng = np.random.RandomState(self.model._get_new_seed())
         dt = self.model.dt
         # find out what we're connecting from
-        if isinstance(conn.pre, nengo.Ensemble): # FIXME direct mode?
-            if conn._decoders is None:
-               activities = conn.pre.activities(conn.eval_points) * dt
-               if conn.function is None:
-                   targets = conn.eval_points
-               else:
-                   targets = np.array(
-                       [conn.function(ep) for ep in conn.eval_points])
-                   if targets.ndim < 2:
-                       targets.shape = targets.shape[0], 1
-
-               conn.base_decoders = conn.decoder_solver(activities, targets, rng) * dt
-
-               # to solve for approximate decoders wrt. principal components:
-               conn._decoders = np.dot(conn.pre.pc_S[0:conn.pre.npc, 0:conn.pre.npc],
-                                        np.dot(conn.pre.pc_u[:,0:conn.pre.npc].transpose(), 
-                                               conn.base_decoders.transpose())).transpose()
-               log.debug("Decoders for " + conn.label + ": " + os.linesep + str(conn._decoders))
+        if isinstance(conn.pre, nengo.Ensemble): # FIXME direct mode?        
+            activities = conn.pre.activities(conn.eval_points) * dt
+            if conn.function is None:
+                targets = conn.eval_points
+            else:
+                targets = np.array(
+                    [conn.function(ep) for ep in conn.eval_points])
+                if targets.ndim < 2:
+                    targets.shape = targets.shape[0], 1
+                    
+            conn.base_decoders = conn.decoder_solver(activities, targets, rng) * dt
+           
+            # to solve for approximate decoders wrt. principal components:
+            conn._decoders = np.dot(conn.pre.pc_S[0:conn.pre.npc, 0:conn.pre.npc],
+                                    np.dot(conn.pre.pc_u[:,0:conn.pre.npc].transpose(), 
+                                           conn.base_decoders)).transpose()
+            log.debug("Decoders for " + conn.label + ": " + os.linesep + str(conn._decoders))
             if conn.filter is not None and conn.filter > dt:
                 conn.o_coef, conn.n_coef = self.filter_coefs(pstc=conn.filter, dt=dt)
             else:
