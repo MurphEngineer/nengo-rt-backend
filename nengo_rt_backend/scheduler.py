@@ -37,7 +37,7 @@ class EncoderScheduler(object):
         for encoder in self.encoderSchedule:
             for op in encoder:
                 operationCount += 1
-        if operationCount <= 128:
+        if operationCount <= 96:
             log.info("trivial schedule")
             tOpt = TrivialOptimizer()
             return tOpt(self.encoderSchedule)
@@ -117,10 +117,10 @@ class TrivialOptimizer(BaseOptimizer):
         operationCount = 0
         for encoder in newSchedule:
             for op in encoder:
-                op.time = operationCount
+                op.time = 2 * operationCount
                 operationCount += 1
-        if operationCount > 128:
-            log.warn(">128 operations in this schedule, correctness of TrivialOptimizer unlikely")
+        if operationCount > 96:
+            log.warn(">96 operations in this schedule, correctness of TrivialOptimizer unlikely")
         return newSchedule
 
 class GeneticOptimizer(BaseOptimizer):
