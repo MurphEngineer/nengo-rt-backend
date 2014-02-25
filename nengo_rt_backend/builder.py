@@ -689,22 +689,35 @@ class Builder(object):
         # and X is the coefficient offset (A=0, B=1, C=2, D=3)
         log.info("writing filter coefficients...")
         for N in range(self.target.total_population_1d_count):
-            for F in range(2):
-                pstc = self.cluster_filters_1d[N][F]
-                (A, B) = self.filter_coefs(pstc, self.model.dt)
-                C = A
-                D = B
-                Nstr = pad(bin(N)[2:], '0', 7)
-                Fstr = pad(bin(F)[2:], '0', 2)
-                Astr = pad(float2sfixed(A), '0', 40)
-                Bstr = pad(float2sfixed(B), '0', 40)
-                Cstr = pad(float2sfixed(C), '0', 40)
-                Dstr = pad(float2sfixed(D), '0', 40)
-                addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
-                print(addr + "00" + ' ' + Astr, file=loadfile)
-                print(addr + "01" + ' ' + Bstr, file=loadfile)
-                print(addr + "10" + ' ' + Cstr, file=loadfile)
-                print(addr + "11" + ' ' + Dstr, file=loadfile)
+            if N < len(self.population_clusters_1d):
+                for F in range(2):
+                    pstc = self.cluster_filters_1d[N][F]
+                    (A, B) = self.filter_coefs(pstc, self.model.dt)
+                    C = A
+                    D = B
+                    Nstr = pad(bin(N)[2:], '0', 7)
+                    Fstr = pad(bin(F)[2:], '0', 2)
+                    Astr = pad(float2sfixed(A), '0', 40)
+                    Bstr = pad(float2sfixed(B), '0', 40)
+                    Cstr = pad(float2sfixed(C), '0', 40)
+                    Dstr = pad(float2sfixed(D), '0', 40)
+                    addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
+                    print(addr + "00" + ' ' + Astr, file=loadfile)
+                    print(addr + "01" + ' ' + Bstr, file=loadfile)
+                    print(addr + "10" + ' ' + Cstr, file=loadfile)
+                    print(addr + "11" + ' ' + Dstr, file=loadfile)
+            else:
+                # program bogus filters for unused population unit
+                log.warn("zeroing filters on unused 1D population unit #" + str(N))
+                for F in range(2):
+                    Nstr = pad(bin(N)[2:], '0', 7)
+                    Fstr = pad(bin(F)[2:], '0', 2)
+                    data = pad('0', '0', 40)
+                    addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
+                    print(addr + "00" + ' ' + data, file=loadfile)
+                    print(addr + "01" + ' ' + data, file=loadfile)
+                    print(addr + "10" + ' ' + data, file=loadfile)
+                    print(addr + "11" + ' ' + data, file=loadfile)
 
         # FIXME now do it for 2D population units
 
@@ -746,9 +759,9 @@ class Builder(object):
                 pc = self.cluster_principal_components_1d[N][P]
                 for A in range(1024):
                     if A >= 512:
-                        sample = pc[0, A - 512] # sample from (x < 0) side of PC
+                        sample = pc[A - 512] # sample from (x < 0) side of PC
                     else:
-                        sample = pc[0, A + 512] # sample from (x >= 0) side of PC
+                        sample = pc[A + 512] # sample from (x >= 0) side of PC
                     Nstr = pad(bin(N)[2:], '0', 7)
                     Pstr = pad(bin(P)[2:], '0', 4)
                     Astr = pad(bin(A)[2:], '0', 10)
@@ -782,8 +795,8 @@ class Builder(object):
                         # new decoders: [[0], [1], [2], [3],...,[7]]
                         decoders = conn._decoders
                         for D in range(7):
-                            Dstr = pad(bin(D)[2:], '0', 4)
-                            decoder = decoders[0, D]
+                            Dstr = pad(bin(D)[2:], '0', 4)                            
+                            decoder = decoders[D, 0]
                             decoderStr = pad(float2sfixed(decoder), '0', 40)
                             addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
                             print(addrStr + ' ' + decoderStr, file=loadfile)
