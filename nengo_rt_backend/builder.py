@@ -213,11 +213,12 @@ class Builder(object):
         # perform clustering of 1D populations
         log.info("Clustering 1D population groups")
         dist = object_pdist(self.populations_1d, self.population_distance)
+        # FIXME this has issues when there is only one population
         nonzero_dist = dist[dist > 0.0]
         square_dist = scipy.spatial.distance.squareform(dist)
         log.debug("Maximum distance is " + str(max(dist)))
         log.debug("Minimum non-zero distance is " + str(min(nonzero_dist)))
-        log.debug("Average non-zero distance is " + str(np.mean(nonzero_dist)))
+        log.debug("Average non-zero distance is " + str(np.mean(nonzero_dist)))        
  
         # visualize
 #        log.debug("Plotting distance matrix")
@@ -372,7 +373,7 @@ class Builder(object):
         # which are INPUTS with respect to the hardware (because the values come from the host simulation)
         # and are OUTPUTS with respect to the nodes (because they are values provided from the nodes)
 
-        log.info("assigning input addresses to nodes")
+        log.info("Assigning input addresses to nodes")
 
         maximum_input_count = self.target.boards[0].input_dv_count * 2048 # TODO this assumes single-board
 
@@ -397,6 +398,7 @@ class Builder(object):
                     node.initial_value = output_signal
                     node.output_dimensions = 1
                     node.output_addrs = [input_address]
+                    log.debug("Node " + node.label + " input addresses: " + str(node.output_addrs))
                     input_address += node.output_dimensions
                 elif isinstance(node.output, complex):
                     # OPTIMIZATION: output is a constant.
@@ -407,6 +409,7 @@ class Builder(object):
                     node.initial_value = output_signal
                     node.output_dimensions = 2
                     node.output_addrs = [input_address, input_address+1]
+                    log.debug("Node " + node.label + " input addresses: " + str(node.output_addrs))
                     input_address += node.output_dimensions
                 else:
                     # output is a function (of simulation time)
@@ -422,6 +425,7 @@ class Builder(object):
                     for i in range(node.output_dimensions):
                         node.output_addrs.append(input_address)
                         input_address += 1
+                    log.debug("Node " + node.label + " input addresses: " + str(node.output_addrs))
             else:
                 if node.output is None:
                     # in this special case, Nengo says that the output is the identity function
@@ -448,6 +452,7 @@ class Builder(object):
                     for i in range(node.output_dimensions):
                         node.output_addrs.append(input_address)
                         input_address += 1
+                    log.debug("Node " + node.label + " input addresses: " + str(node.output_addrs))
             # now use the node's output addresses to give DV addresses to each outgoing connection
             for conn in node.outputs:
                 conn.decoded_value_addrs = node.output_addrs
@@ -569,12 +574,14 @@ class Builder(object):
         # We can do this one by looping over all connections, which have all been assigned some
         # list of decoded_value_addrs, and taking either their initial_value or a vector of 0s
         # to be the starting values for the DV buffers.
-        # program at address [000 HHHHHHHH 00 LLLLLLLLLLL]
+        # program at address [000 00 HHHHHHHH LLLLLLLLLLL]
         # where H is the high (<<11) part of the DV address and L is the low (&2^11-1) part of the DV address;
         # the data is simply the 12-bit float2sfixed() representation of each initial value
         log.info("writing decoded value buffer initial values...")
         for conn in self.connections:
             pre = conn.pre
+            if pre.dv_addrs_done:
+                continue            
             if hasattr(pre, "initial_value"):
                 # write the corresponding initial value for each address
                 for Q in zip(conn.decoded_value_addrs, pre.initial_value):
@@ -583,7 +590,7 @@ class Builder(object):
                     L = addr & (2**11 - 1)
                     Hstr = pad(bin(H)[2:], '0', 8)
                     Lstr = pad(bin(L)[2:], '0', 11)
-                    addrStr = "000" + Hstr + "00" + Lstr
+                    addrStr = "000" + "00" + Hstr + Lstr
                     data = Q[1]
                     dataStr = pad(float2sfixed(data), '0', 40)
                     print(addrStr + ' ' + dataStr, file=loadfile)
@@ -594,9 +601,10 @@ class Builder(object):
                     L = addr & (2**11 - 1)
                     Hstr = pad(bin(H)[2:], '0', 8)
                     Lstr = pad(bin(L)[2:], '0', 11)
-                    addrStr = "000" + Hstr + "00" + Lstr
+                    addrStr = "000" + "00" + Hstr + Lstr
                     data = "0"*40
                     print(addrStr + ' ' + data, file=loadfile)
+            pre.dv_addrs_done = True
         
         # 0x1: Encoder instruction buffers
         # Program 40-bit instructions at "001 NNNNNNN 000000000000 EE"
@@ -1005,11 +1013,13 @@ class Builder(object):
         # set up input and output arrays to be filled with connections
         ens.inputs = []
         ens.outputs = []
+        ens.dv_addrs_done = False
 
     def build_node(self, node):
         # set up input and output arrays to be filled with connections
         node.inputs = []
         node.outputs = []
+        node.dv_addrs_done = False
 
     def build_probe(self, probe):
         # set up input array to be filled with connections
