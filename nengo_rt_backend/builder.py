@@ -636,6 +636,7 @@ class Builder(object):
         for T in range(1024):
             schedules = self.encoder_schedules[T]
             if schedules is []:
+                log.warn("programming no-ops on every encoder, possible model inconsistency")
                 # program a no-op on every encoder
                 for N in range(128):
                     for E in range(4):
@@ -646,7 +647,7 @@ class Builder(object):
                         insnStr = "1000000011111111111111111111000000000000"
                         print(addrStr + ' ' + insnStr, file=loadfile)
             else:
-                for N in range(128):
+                for N in range(128): # FIXME don't waste time programming unused population units
                     for E in range(4):
                         # calculate write address
                         Nstr = pad(bin(N)[2:], '0', 7)
@@ -656,7 +657,7 @@ class Builder(object):
                             schedule = schedules[N * 4 + E]
                         else:
                             schedule = []
-                        if schedule is []:
+                        if len(schedule) == 0:
                             # program a no-op on this encoder
                             insnStr = "1000000011111111111111111111000000000000"
                             print(addrStr + ' ' + insnStr, file=loadfile)
