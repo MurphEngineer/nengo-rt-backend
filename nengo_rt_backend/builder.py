@@ -787,7 +787,7 @@ class Builder(object):
         # If there are fewer than 1024 populations in any given cluster, 
         # or if for any reason a population has fewer than the requisite number of decoders,
         # program the remaining decoders to be all zeroes.
-        # program at address [101 NNNNNNNVV 00000000 DDDD]
+        # program at address [101 00000000 NNNNNNNVV DDDD]
         # where N is the cluster index (0-127), V is the index of the decoded value (0-3),
         # and D is the index of the decoder (0-15).
         # Note that there is no field for population; this is because the target is a circular buffer.
@@ -807,10 +807,10 @@ class Builder(object):
                             Dstr = pad(bin(D)[2:], '0', 4)                            
                             decoder = decoders[0, D]
                             decoderStr = pad(float2sfixed(decoder), '0', 40)
-                            addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
+                            addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
                             print(addrStr + ' ' + decoderStr, file=loadfile)
                         # write decoder 8 = "000000010100"
-                        print("101" + Nstr + Vstr + "00000000" + "1000" + ' ' + 
+                        print("101" + "00000000" + Nstr + Vstr + "1000" + ' ' + 
                               pad("000000010100", '0', 40), file=loadfile)
                         decoder_idx += 1
                 while decoder_idx < 4:
@@ -819,7 +819,7 @@ class Builder(object):
                     for D in range(8):
                         Dstr = pad(bin(D)[2:], '0', 4)
                         decoderStr = pad('0', '0', 40)
-                        addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
+                        addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
                         print(addrStr + ' ' + decoderStr, file=loadfile)
                     decoder_idx += 1
                 pop_idx += 1
@@ -830,7 +830,7 @@ class Builder(object):
                     for D in range(8):
                         Dstr = pad(bin(D)[2:], '0', 4)
                         decoderStr = pad('0', '0', 40)
-                        addrStr = "101" + Nstr + Vstr + "00000000" + Dstr
+                        addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
                         print(addrStr + ' ' + decoderStr, file=loadfile)
                 pop_idx += 1
 
