@@ -607,7 +607,7 @@ class Builder(object):
             pre.dv_addrs_done = True
         
         # 0x1: Encoder instruction buffers
-        # Program 40-bit instructions at "001 NNNNNNN 000000000000 EE"
+        # Program 40-bit instructions at "001 000000000000 NNNNNNN EE"
         # where N is the population unit index and E is the encoder index on that population unit
         # Instruction format is as follows:
         # |L|TTTTTTT|P|AAAAAAAAAAAAAAAAAAA|WWWWWWWWWWWW|
@@ -643,7 +643,7 @@ class Builder(object):
                         # calculate write address
                         Nstr = pad(bin(N)[2:], '0', 7)
                         Estr = pad(bin(E)[2:], '0', 2)
-                        addrStr = "001" + Nstr + "000000000000" + Estr
+                        addrStr = "001" + "000000000000" + Nstr + Estr
                         insnStr = "1000000011111111111111111111000000000000"
                         print(addrStr + ' ' + insnStr, file=loadfile)
             else:
@@ -652,7 +652,7 @@ class Builder(object):
                         # calculate write address
                         Nstr = pad(bin(N)[2:], '0', 7)
                         Estr = pad(bin(E)[2:], '0', 2)
-                        addrStr = "001" + Nstr + "000000000000" + Estr
+                        addrStr = "001" + "000000000000" + Nstr + Estr
                         if len(schedules) > N*4+E:
                             schedule = schedules[N * 4 + E]
                         else:
@@ -692,7 +692,7 @@ class Builder(object):
         # get this list from self.cluster_filters_1d which will be a list of length 2
         # or self.cluster_filters_2d which will be a list of length 4
         # the tuple returned is (A, B) and since we need C and D also, we set C=A and D=B for the filter
-        # program at address [010 NNNNNNNFF 00000000 00XX]
+        # program at address [010 00000000 00 NNNNNNNFFXX]
         # where N is the population unit index (0-127)
         # F is the filter index
         # and X is the coefficient offset (A=0, B=1, C=2, D=3)
@@ -710,7 +710,7 @@ class Builder(object):
                     Bstr = pad(float2sfixed(B), '0', 40)
                     Cstr = pad(float2sfixed(C), '0', 40)
                     Dstr = pad(float2sfixed(D), '0', 40)
-                    addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
+                    addr = "010" + "00000000" + "00" + Nstr + Fstr # + CC
                     print(addr + "00" + ' ' + Astr, file=loadfile)
                     print(addr + "01" + ' ' + Bstr, file=loadfile)
                     print(addr + "10" + ' ' + Cstr, file=loadfile)
@@ -722,7 +722,7 @@ class Builder(object):
                     Nstr = pad(bin(N)[2:], '0', 7)
                     Fstr = pad(bin(F)[2:], '0', 2)
                     data = pad('0', '0', 40)
-                    addr = "010" + Nstr + Fstr + "00000000" + "00" # + CC
+                    addr = "010" + "00000000" + "00" + Nstr + Fstr # + CC
                     print(addr + "00" + ' ' + data, file=loadfile)
                     print(addr + "01" + ' ' + data, file=loadfile)
                     print(addr + "10" + ' ' + data, file=loadfile)
@@ -865,6 +865,7 @@ class Builder(object):
             for conn in probe.inputs:
                 for addr in conn.decoded_value_addrs:
                     probed_addresses.add(addr)
+        log.debug("Probes at addresses " + str(probed_addresses))
         if len(probed_addresses) <= 512:
             probed_addresses = list(probed_addresses)
             # easy case: one-to-one correspondence between addresses and instructions
