@@ -620,8 +620,6 @@ class Builder(object):
         # or a list T of more lists (128*4; PUs then encoders) E. 
         # Each list E corresponds to the schedule for one encoder
         # in this timeslice. Now, E can be empty, in which case we need to write a no-op instruction.
-        # (FIXME we can make an optimization here if the E for a certain encoder is empty in every list T;
-        # by writing no instructions the encoder will actually report "done" on every clock cycle)
         # Our no-op is "1 0000000 1 1111111111111111111 000000000000" which should almost always be
         # an illegal address. This makes sure the encoder finishes as quickly as possible and does not
         # produce a result that affects the operation of other encoders or the population unit.
@@ -632,23 +630,60 @@ class Builder(object):
         # it is two less than the time difference between the current and previous instruction.
         # Then we transcribe the .readInfo (DV address, weight) and .port to make an instruction
         # and output it to the loadfile.
+
+        # By the way, how to program a no-op:
+        #         # calculate write address
+        #         Nstr = pad(bin(N)[2:], '0', 7)
+        #         Estr = pad(bin(E)[2:], '0', 2)
+        #         addrStr = "001" + "000000000000" + Nstr + Estr
+        #         insnStr = "1000000011111111111111111111000000000000"
+        #         print(addrStr + ' ' + insnStr, file=loadfile)
+
         log.info("writing encoder instruction buffers...")
-        for T in range(1024):
-            schedules = self.encoder_schedules[T]
-            if schedules is []:
-                log.warn("programming no-ops on every encoder, possible model inconsistency")
-                # program a no-op on every encoder
-                for N in range(128):
-                    for E in range(4):
-                        # calculate write address
+
+        for N in range(128):
+            # if this population unit isn't used, program a single no-op on all encoders and continue
+            # FIXME check the 2D range as well
+            if N >= len(self.population_clusters_1d):
+                # writing zero instructions to an encoder optimizes it out completely
+                log.debug("not programming encoders on unused population unit " + str(N))
+                continue
+            # so, this population unit has been assigned at least one population.
+            # however, not all encoders are necessarily going to be used;
+            # for each encoder, first check if any schedule is non-empty,
+            # and if all are empty, program a single no-op
+            for E in range(4):
+                disableEncoder = True
+                # check all schedules for this encoder
+                for T in range(1024):
+                    schedules = self.encoder_schedules[T]
+                    if schedules is []:
+                        continue
+                    if len(schedules) <= N*4+E:
+                        continue 
+                    schedule = schedules[N*4+E]
+                    if len(schedule) == 0:
+                        continue
+                    # found a non-empty schedule for this encoder
+                    disableEncoder = False
+                    break
+                if disableEncoder:
+                    log.debug("not programming unused encoder " + str(E) +
+                              " on population unit " + str(N))
+                    continue                
+
+                for T in range(1024):
+                    schedules = self.encoder_schedules[T]
+                    if schedules is []:
+                        # no instructions for any encoder in this timeslice;
+                        # program a no-op
                         Nstr = pad(bin(N)[2:], '0', 7)
                         Estr = pad(bin(E)[2:], '0', 2)
                         addrStr = "001" + "000000000000" + Nstr + Estr
                         insnStr = "1000000011111111111111111111000000000000"
                         print(addrStr + ' ' + insnStr, file=loadfile)
-            else:
-                for N in range(128): # FIXME don't waste time programming unused population units
-                    for E in range(4):
+                    else:
+                        # FIXME skip programming encoders 3 and 4 on 1D population units
                         # calculate write address
                         Nstr = pad(bin(N)[2:], '0', 7)
                         Estr = pad(bin(E)[2:], '0', 2)
@@ -657,7 +692,7 @@ class Builder(object):
                             schedule = schedules[N * 4 + E]
                         else:
                             schedule = []
-                        if len(schedule) == 0:
+                        if len(schedule) == 0:                            
                             # program a no-op on this encoder
                             insnStr = "1000000011111111111111111111000000000000"
                             print(addrStr + ' ' + insnStr, file=loadfile)
@@ -717,7 +752,8 @@ class Builder(object):
                     print(addr + "11" + ' ' + Dstr, file=loadfile)
             else:
                 # program bogus filters for unused population unit
-                log.warn("zeroing filters on unused 1D population unit #" + str(N))
+                log.debug("zeroing filters on unused 1D population unit #" + str(N))
+                # FIXME is this necessary?
                 for F in range(2):
                     Nstr = pad(bin(N)[2:], '0', 7)
                     Fstr = pad(bin(F)[2:], '0', 2)
@@ -791,6 +827,8 @@ class Builder(object):
         # where N is the cluster index (0-127), V is the index of the decoded value (0-3),
         # and D is the index of the decoder (0-15).
         # Note that there is no field for population; this is because the target is a circular buffer.
+        # FIXME on population units that don't use all four decoders, program a single zero
+        # on each of the unused decoders
         log.info("writing decoder circular buffers...")
         for N in range(len(self.population_clusters_1d)):
             Nstr = pad(bin(N)[2:], '0', 7)
