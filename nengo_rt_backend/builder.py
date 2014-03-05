@@ -80,7 +80,7 @@ def float2sfixed(f):
     if sgn == "1":
         # take two's complement
         n = int(istr + fstr, 2)
-        nc = 2**11 - n
+        nc = 2**12 - n
         return sgn + pad(bin(nc)[2:], "1", 11)
     else:
         return sgn + istr + fstr
@@ -813,6 +813,8 @@ class Builder(object):
                     addr = "100" + Nstr + Pstr + Astr
                     sampleStr = pad(float2sfixed(sample), '0', 40)
                     print(addr + ' ' + sampleStr, file=loadfile)
+                    if N == 0 and P == 0:
+                        log.debug("PC#" + str(P) + ": A=" + str(A) + " sample=" + str(sample))
         # FIXME now do it for 2D
 
         # 0x5: Decoder circular buffers
