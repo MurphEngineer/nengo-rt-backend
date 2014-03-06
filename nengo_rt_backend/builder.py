@@ -274,12 +274,18 @@ class Builder(object):
             pc_rep = candidate.principal_components
             # scale to +/-max_12bit_value
             pc_max = np.absolute(pc_rep).max(axis=1)
+
+            scale_factors = []
+
             for i in range(pc_rep.shape[0]):
                 scale_factor = self.max_12bit_value / pc_max[i]
                 # save this for when we recompute decoders
-                self.cluster_pc_scale_factor_1d.append(scale_factor)
+                scale_factors.append(scale_factor)
                 for j in range(pc_rep.shape[1]):
                     pc_rep[i, j] *= scale_factor
+                log.debug("Scale factor for candidate's " + str(i) 
+                          + "-order component: " + str(scale_factor))
+            self.cluster_pc_scale_factor_1d.append(scale_factors)
             self.cluster_principal_components_1d.append(pc_rep)
 
         # calculate representative filter coefficients for each cluster
@@ -326,6 +332,8 @@ class Builder(object):
             cluster = self.population_clusters_1d[N]
             # cluster[N] runs on population unit N for 1D clusters            
             scale_factor = self.cluster_pc_scale_factor_1d[N]
+            log.debug("Scaling populations on unit " + str(N) + " with scale factor " +
+                      str(scale_factor))
             pop_idx = 0
             for population in cluster:
                 decoder_idx = 0
@@ -334,6 +342,7 @@ class Builder(object):
                     # (PC * decoder) = (PC * scale factor * 1/scale factor * decoder)
                     # = (PC * scale_factor) * (1/scale factor * decoder);
                     # adjust conn._decoders by 1/scale factor
+                    log.debug("old decoders for " + conn.label + ": " + str(conn._decoders))
                     conn._decoders /= scale_factor
                     log.debug("new decoders for " + conn.label + ": " + str(conn._decoders))
                     decoders_max = np.absolute(conn._decoders).max()
@@ -813,8 +822,6 @@ class Builder(object):
                     addr = "100" + Nstr + Pstr + Astr
                     sampleStr = pad(float2sfixed(sample), '0', 40)
                     print(addr + ' ' + sampleStr, file=loadfile)
-                    if N == 0 and P == 0:
-                        log.debug("PC#" + str(P) + ": A=" + str(A) + " sample=" + str(sample))
         # FIXME now do it for 2D
 
         # 0x5: Decoder circular buffers
@@ -849,8 +856,8 @@ class Builder(object):
                             decoderStr = pad(float2sfixed(decoder), '0', 40)
                             addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
                             print(addrStr + ' ' + decoderStr, file=loadfile)
-                        # write decoder 8 = "000000010100"
-                        print("101" + "00000000" + Nstr + Vstr + "1000" + ' ' + 
+                        # write decoder 7 = "000000010100"
+                        print("101" + "00000000" + Nstr + Vstr + "0111" + ' ' + 
                               pad("000000010100", '0', 40), file=loadfile)
                         decoder_idx += 1
                 while decoder_idx < 4:
