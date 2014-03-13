@@ -211,31 +211,37 @@ class Builder(object):
         # four decoded values coming from each one
 
         # perform clustering of 1D populations
-        log.info("Clustering 1D population groups")
-        dist = object_pdist(self.populations_1d, self.population_distance)
-        # FIXME this has issues when there is only one population
-        nonzero_dist = dist[dist > 0.0]
-        square_dist = scipy.spatial.distance.squareform(dist)
-        log.debug("Maximum distance is " + str(max(dist)))
-        log.debug("Minimum non-zero distance is " + str(min(nonzero_dist)))
-        log.debug("Average non-zero distance is " + str(np.mean(nonzero_dist)))        
+        if len(self.populations_1d) == 1:
+            log.info("Only one 1D population, clustering is trivial")
+            # fake the outcome of clustering
+            cluster_assignments = [1]
+            square_dist = np.array([[0.0]])
+        else:
+            log.info("Clustering 1D population groups")
+            dist = object_pdist(self.populations_1d, self.population_distance)
+            nonzero_dist = dist[dist > 0.0]
+            square_dist = scipy.spatial.distance.squareform(dist)
+            log.debug("Maximum distance is " + str(max(dist)))
+            log.debug("Minimum non-zero distance is " + str(min(nonzero_dist)))
+            log.debug("Average non-zero distance is " + str(np.mean(nonzero_dist)))        
  
         # visualize
 #        log.debug("Plotting distance matrix")
 #        imgplot = plt.matshow(square_dist)
 #        plt.show()
         
-        linkage = scipy.cluster.hierarchy.linkage(dist, method='single')
+            linkage = scipy.cluster.hierarchy.linkage(dist, method='single')
         # visualize
 #        log.debug("Plotting clustered dendrogram")
 #        scipy.cluster.hierarchy.dendrogram(linkage)
 #        plt.show()
-        cluster_assignments = scipy.cluster.hierarchy.fcluster(linkage, criterion='maxclust',
+            cluster_assignments = scipy.cluster.hierarchy.fcluster(linkage, criterion='maxclust',
                                                                t=self.target.total_population_1d_count)
-        log.info(str(max(cluster_assignments) - min(cluster_assignments) + 1) + " clusters formed")
+        log.info(str(max(cluster_assignments) - min(cluster_assignments) + 1) 
+                 + " clusters formed")
         cluster_sizes = np.bincount(cluster_assignments)[1:] # the first element of the original array is always 0
         log.debug("1D population cluster sizes: " + os.linesep + 
-                  str(cluster_sizes))
+                      str(cluster_sizes))
 
         # assign populations to clusters
         self.population_clusters_1d = [ [] for i in range(max(cluster_assignments)) ]
@@ -546,7 +552,7 @@ class Builder(object):
             # and 4 (max) encoders per population unit
             schedule = [ [] for i in range(128 * 4) ]
             emptySchedule = True
-            # first count 1-D populations, which start at 0
+            # first count 1-D populations, which start at 0 and go up
             for cluster in range(len(self.cluster_encoders_1d)):
                 for encoder in range(4):
                     # if this cluster doesn't use this encoder, or this cluster 
@@ -558,7 +564,7 @@ class Builder(object):
                         schedule[cluster * 4 + encoder] = self.cluster_encoders_1d[cluster][encoder][i]
                         if len(self.cluster_encoders_1d[cluster][encoder][i]) > 0:
                             emptySchedule = False
-            # now count 2-D populations, which start at 127
+            # now count 2-D populations, which start at 95 and go down
             # FIXME do this
             # perform scheduling and add the result to self.encoder_schedules
             if emptySchedule:
@@ -745,7 +751,13 @@ class Builder(object):
             if N < len(self.population_clusters_1d):
                 for F in range(2):
                     pstc = self.cluster_filters_1d[N][F]
-                    (A, B) = self.filter_coefs(pstc, self.model.dt)
+                    # fix for filters whose time constant is 0
+                    if pstc == 0.0:
+                        log.debug("zeroing unused filter " + str(F) + " on population unit " + str(N))
+                        A = 0.0
+                        B = 0.0
+                    else:
+                        (A, B) = self.filter_coefs(pstc, self.model.dt)
                     C = A
                     D = B
                     Nstr = pad(bin(N)[2:], '0', 7)

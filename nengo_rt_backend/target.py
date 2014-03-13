@@ -44,7 +44,7 @@ class Board(object):
             self.name = "(unnamed board)"
             self.dv_count = 0
             self.input_dv_count = 0
-            self.first_input_dv_index = 0
+            self.first_input_dv_index = 0 # FIXME not necessary if we decide that input always starts at 96
             self.population_1d_count = 0
             self.population_2d_count = 0
         else:

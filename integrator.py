@@ -17,12 +17,13 @@ makePlots = False
 
 model = nengo.Model(label='Integrator')
 
-input = nengo.Node(nengo.helpers.piecewise({0:0,0.2:1,1:0,2:-2,3:0,4:1,5:0}), label='Piecewise input')
+#input = nengo.Node(nengo.helpers.piecewise({0:0,0.2:1,1:0,2:-2,3:0,4:1,5:0}), label='Piecewise input')
+input = nengo.Node(nengo.helpers.piecewise({0:0.5}), label='Constant input 0.5')
 
 A = []
 tau = 0.1
 
-for i in range(64):
+for i in range(1):
     Ai = nengo.Ensemble(nengo.LIF(100, tau_rc=0.02, tau_ref=0.002),
                         dimensions=1, label='Integrator ' + str(i))
     A.append(Ai)
