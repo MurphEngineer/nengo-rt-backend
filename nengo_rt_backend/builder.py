@@ -85,6 +85,18 @@ def float2sfixed(f):
     else:
         return sgn + istr + fstr
 
+# Returns an array of dimensions (nX * nY, 2)
+# where nX = (1 + (x2-x1)/xStep) and similar for nY.
+# Values in the first dimension of the returned array run faster than
+# values in the second dimension.
+def samplepoints2d(x1, x2, xStep, y1, y2, yStep):
+    xRange = np.arange(x1, x2+xStep, xStep)
+    yRange = np.arange(y1, y2+yStep, yStep)
+    result = []
+    for y in yRange:
+        for x in xRange:
+            result.append([x, y])
+    return np.array(result)
 
 class ShapeMismatch(ValueError):
     pass
@@ -211,7 +223,10 @@ class Builder(object):
         # four decoded values coming from each one
 
         # perform clustering of 1D populations
-        if len(self.populations_1d) == 1:
+        if len(self.populations_1d) == 0:
+            log.info("No 1D populations")
+            self.population_clusters_1d = []
+        elif len(self.populations_1d) == 1:
             log.info("Only one 1D population, clustering is trivial")
             # fake the outcome of clustering
             cluster_assignments = [1]
@@ -237,149 +252,289 @@ class Builder(object):
 #        plt.show()
             cluster_assignments = scipy.cluster.hierarchy.fcluster(linkage, criterion='maxclust',
                                                                t=self.target.total_population_1d_count)
-        log.info(str(max(cluster_assignments) - min(cluster_assignments) + 1) 
-                 + " clusters formed")
-        cluster_sizes = np.bincount(cluster_assignments)[1:] # the first element of the original array is always 0
-        log.debug("1D population cluster sizes: " + os.linesep + 
-                      str(cluster_sizes))
 
-        # assign populations to clusters
-        self.population_clusters_1d = [ [] for i in range(max(cluster_assignments)) ]
-        self.cluster_principal_components_1d = []
-        self.cluster_pc_scale_factor_1d = []
+        if len(self.populations_1d) > 0:
+            log.info(str(max(cluster_assignments) - min(cluster_assignments) + 1) 
+                     + " clusters formed")
+            cluster_sizes = np.bincount(cluster_assignments)[1:] # the first element of the original array is always 0
+            log.debug("1D population cluster sizes: " + os.linesep + 
+                          str(cluster_sizes))
 
-        for i in range(len(cluster_assignments)):
-            population = self.populations_1d[i]
-            population.population_list_idx = i # used to index into the distance matrix
-            cluster_idx = cluster_assignments[i] - 1 # our clusters start at 0
-            self.population_clusters_1d[cluster_idx].append(population)
-            population.cluster_idx = cluster_idx
+            # assign populations to clusters
+            self.population_clusters_1d = [ [] for i in range(max(cluster_assignments)) ]
+            self.cluster_principal_components_1d = []
+            self.cluster_pc_scale_factor_1d = []
 
-        # calculate the representative principal components of each cluster
-        log.info("Calculating clustered 1D principal components")
-        for cluster in self.population_clusters_1d:
-            # Calculate representative principal components by finding a representative population in each cluster.
-            # To simplify things, this will be the population with the least maximum distance
-            # to another population in the same cluster.
-            # Use the precomputed distance matrix square_dist to help us
-            candidate_idx = -1
-            candidate_minimum = np.inf
-            for challenger in cluster:
-                # find maximum distance between challenger and another population
-                max_distance = 0
-                for matched in cluster:
-                    new_distance = square_dist[challenger.population_list_idx, matched.population_list_idx]
-                    if new_distance > max_distance:
-                        max_distance = new_distance
-                if max_distance < candidate_minimum:
-                    candidate_idx = challenger.population_list_idx
-                    candidate_minimum = max_distance
-            candidate = self.populations_1d[candidate_idx]
-            log.debug("Selected population #" + str(candidate_idx) + 
-                      "( " + candidate.label + ") as candidate")
-            pc_rep = candidate.principal_components
-            # scale to +/-max_12bit_value
-            pc_max = np.absolute(pc_rep).max(axis=1)
+            for i in range(len(cluster_assignments)):
+                population = self.populations_1d[i]
+                population.population_list_idx = i # used to index into the distance matrix
+                cluster_idx = cluster_assignments[i] - 1 # our clusters start at 0
+                self.population_clusters_1d[cluster_idx].append(population)
+                population.cluster_idx = cluster_idx
 
-            scale_factors = []
+            # calculate the representative principal components of each cluster
+            log.info("Calculating clustered 1D principal components")
+            for cluster in self.population_clusters_1d:
+                # Calculate representative principal components by finding a representative population in each cluster.
+                # To simplify things, this will be the population with the least maximum distance
+                # to another population in the same cluster.
+                # Use the precomputed distance matrix square_dist to help us
+                candidate_idx = -1
+                candidate_minimum = np.inf
+                for challenger in cluster:
+                    # find maximum distance between challenger and another population
+                    max_distance = 0
+                    for matched in cluster:
+                        new_distance = square_dist[challenger.population_list_idx, matched.population_list_idx]
+                        if new_distance > max_distance:
+                            max_distance = new_distance
+                    if max_distance < candidate_minimum:
+                        candidate_idx = challenger.population_list_idx
+                        candidate_minimum = max_distance
+                candidate = self.populations_1d[candidate_idx]
+                log.debug("Selected population #" + str(candidate_idx) + 
+                          "( " + candidate.label + ") as candidate")
+                pc_rep = candidate.principal_components
+                # scale to +/-max_12bit_value
+                pc_max = np.absolute(pc_rep).max(axis=1)
 
-            for i in range(pc_rep.shape[0]):
-                scale_factor = self.max_12bit_value / pc_max[i]
-                # save this for when we recompute decoders
-                scale_factors.append(scale_factor)
-                for j in range(pc_rep.shape[1]):
-                    pc_rep[i, j] *= scale_factor
-                log.debug("Scale factor for candidate's " + str(i) 
-                          + "-order component: " + str(scale_factor))
-            self.cluster_pc_scale_factor_1d.append(scale_factors)
-            self.cluster_principal_components_1d.append(pc_rep)
+                scale_factors = []
 
-        # calculate representative filter coefficients for each cluster
-        log.info("Collecting filter coefficients for 1D clusters")
-        self.cluster_filters_1d = []
-        for cluster in self.population_clusters_1d:
-            n = len(cluster)
-            filters = set()
-            for population in cluster:
-                for coefficient in population.filters:
-                    filters.add(coefficient)
-            # add zeros until we have at least two
-            filters = list(set(filters))
-            while len(filters) < 2:
-                filters.append(0.0)
-            # if there are two now, we're done
-            if len(filters) == 2:
-                self.cluster_filters_1d.append(filters)
-            else:
-                raise NotFeasibleError(
-                    "FIXME: cluster has >2 distinct filters, deal with this case")
+                for i in range(pc_rep.shape[0]):
+                    scale_factor = self.max_12bit_value / pc_max[i]
+                    # save this for when we recompute decoders
+                    scale_factors.append(scale_factor)
+                    for j in range(pc_rep.shape[1]):
+                        pc_rep[i, j] *= scale_factor
+                    log.debug("Scale factor for candidate's " + str(i) 
+                              + "-order component: " + str(scale_factor))
+                self.cluster_pc_scale_factor_1d.append(scale_factors)
+                self.cluster_principal_components_1d.append(pc_rep)
 
-        # VERIFY: at most 1024 populations per cluster; if this is violated,
-        # move populations from over-populated clusters one at a time to the
-        # nearest (by metric) cluster with room left
-        for cluster in self.population_clusters_1d:
-            if len(cluster) > 1024:
-                raise NotFeasibleError(
-                    "FIXME: cluster has >1024 populations, implement reassignment")
+            # calculate representative filter coefficients for each cluster
+            log.info("Collecting filter coefficients for 1D clusters")
+            self.cluster_filters_1d = []
+            for cluster in self.population_clusters_1d:
+                n = len(cluster)
+                filters = set()
+                for population in cluster:
+                    for coefficient in population.filters:
+                        filters.add(coefficient)
+                # add zeros until we have at least two
+                filters = list(set(filters))
+                while len(filters) < 2:
+                    filters.append(0.0)
+                # if there are two now, we're done
+                if len(filters) == 2:
+                    self.cluster_filters_1d.append(filters)
+                else:
+                    raise NotFeasibleError(
+                        "FIXME: cluster has >2 distinct filters, deal with this case")
 
-        # FIXME do statistics on populations vs. cluster principal components
+            # VERIFY: at most 1024 populations per cluster; if this is violated,
+            # move populations from over-populated clusters one at a time to the
+            # nearest (by metric) cluster with room left
+            for cluster in self.population_clusters_1d:
+                if len(cluster) > 1024:
+                    raise NotFeasibleError(
+                        "FIXME: cluster has >1024 populations, implement reassignment")
 
-        # so at this point, we have clusters of at most 1024 populations,
-        # each with at most four outgoing connections,
-        # and for each cluster, we know its filter coefficients and its principal components.
-        # the next step is to go through each outgoing connection,
-        # recompute its decoders with respect to the "correct" principal components,
-        # and assign it an address in the decoded value address space.
-        # Assume that population unit N connects to DV buffers (2N) and (2N+1);
-        # then, population #A running on population unit #N writes decoded value #D
-        # to address [NNNNNNN][DD][AAAAAAAAAA].
-        log.info("Calculating decoders for connections leaving 1D populations")
-        for N in range(len(self.population_clusters_1d)):
-            cluster = self.population_clusters_1d[N]
-            # cluster[N] runs on population unit N for 1D clusters            
-            scale_factor = self.cluster_pc_scale_factor_1d[N]
-            log.debug("Scaling populations on unit " + str(N) + " with scale factor " +
-                      str(scale_factor))
-            pop_idx = 0
-            for population in cluster:
-                decoder_idx = 0
-                for conn in population.outputs:
-                    conn._decoders = np.real(conn._decoders)
-                    # (PC * decoder) = (PC * scale factor * 1/scale factor * decoder)
-                    # = (PC * scale_factor) * (1/scale factor * decoder);
-                    # adjust conn._decoders by 1/scale factor
-                    log.debug("old decoders for " + conn.label + ": " + str(conn._decoders))
-                    conn._decoders /= scale_factor
-                    log.debug("new decoders for " + conn.label + ": " + str(conn._decoders))
-                    decoders_max = np.absolute(conn._decoders).max()
-                    if decoders_max > self.max_12bit_value:
-                        log.warn("decoders for " + conn.label + " out of range (" + str(decoders_max) +
-                                 "), rescaling")
-                        decoder_scale_factor = self.max_12bit_value / decoders_max
-                        conn._decoders *= decoder_scale_factor
-                        conn.decoder_inverse_scale_factor = 1.0 / decoder_scale_factor
-                    else:
-                        # decoders don't need rescaling
-                        conn.decoder_inverse_scale_factor = 1.0
-                    # VERIFY: N < 128, D < 4, A < 1024
-                    if N >= 128:
-                        raise NotFeasibleError("Inconsistency detected: more than 128 clusters")
-                    if decoder_idx >= 4 or decoder_idx + conn.dimensions > 4 :
-                        raise NotFeasibleError("Inconsistency detected: population decodes more than 4 values")
-                    if pop_idx >= 1024:
-                        raise NotFeasibleError("Inconsistency detected: more than 1024 populations in cluster")
-                    # at this point, we can correctly assign addresses to this connection
-                    # TODO this assumes single-board targets; use different address spaces for multi-board
-                    conn.decoded_value_addrs = []                
-                    for i in range(conn.dimensions):
-                        conn.decoded_value_addrs.append( (N << 12) + (decoder_idx << 10) + (pop_idx) )
-                        decoder_idx += 1
-                    log.debug("address range for " + conn.label + " is " +
-                              str(conn.decoded_value_addrs[0]) + " to " +
-                              str(conn.decoded_value_addrs[-1]))
-                pop_idx += 1
+            # FIXME do statistics on populations vs. cluster principal components
+
+            # so at this point, we have clusters of at most 1024 populations,
+            # each with at most four outgoing connections,
+            # and for each cluster, we know its filter coefficients and its principal components.
+            # the next step is to go through each outgoing connection,
+            # recompute its decoders with respect to the "correct" principal components,
+            # and assign it an address in the decoded value address space.
+            # Assume that population unit N connects to DV buffers (2N) and (2N+1);
+            # then, population #A running on population unit #N writes decoded value #D
+            # to address [NNNNNNN][DD][AAAAAAAAAA].
+            log.info("Calculating decoders for connections leaving 1D populations")
+            for N in range(len(self.population_clusters_1d)):
+                cluster = self.population_clusters_1d[N]
+                # cluster[N] runs on population unit N for 1D clusters            
+                scale_factor = self.cluster_pc_scale_factor_1d[N]
+                log.debug("Scaling populations on unit " + str(N) + " with scale factor " +
+                          str(scale_factor))
+                pop_idx = 0
+                for population in cluster:
+                    decoder_idx = 0
+                    for conn in population.outputs:
+                        conn._decoders = np.real(conn._decoders)
+                        # (PC * decoder) = (PC * scale factor * 1/scale factor * decoder)
+                        # = (PC * scale_factor) * (1/scale factor * decoder);
+                        # adjust conn._decoders by 1/scale factor
+                        log.debug("old decoders for " + conn.label + ": " + str(conn._decoders))
+                        conn._decoders /= scale_factor
+                        log.debug("new decoders for " + conn.label + ": " + str(conn._decoders))
+                        decoders_max = np.absolute(conn._decoders).max()
+                        if decoders_max > self.max_12bit_value:
+                            log.warn("decoders for " + conn.label + " out of range (" + str(decoders_max) +
+                                     "), rescaling")
+                            decoder_scale_factor = self.max_12bit_value / decoders_max
+                            conn._decoders *= decoder_scale_factor
+                            conn.decoder_inverse_scale_factor = 1.0 / decoder_scale_factor
+                        else:
+                            # decoders don't need rescaling
+                            conn.decoder_inverse_scale_factor = 1.0
+                        # VERIFY: N < 96, D < 4, A < 1024
+                        if N >= 96:
+                            raise NotFeasibleError("Inconsistency detected: more than 96 clusters")
+                        if decoder_idx >= 4 or decoder_idx + conn.dimensions > 4 :
+                            raise NotFeasibleError("Inconsistency detected: population decodes more than 4 values")
+                        if pop_idx >= 1024:
+                            raise NotFeasibleError("Inconsistency detected: more than 1024 populations in cluster")
+                        # at this point, we can correctly assign addresses to this connection
+                        # TODO this assumes single-board targets; use different address spaces for multi-board
+                        conn.decoded_value_addrs = []                
+                        for i in range(conn.dimensions):
+                            conn.decoded_value_addrs.append( (N << 12) + (decoder_idx << 10) + (pop_idx) )
+                            decoder_idx += 1
+                        log.debug("address range for " + conn.label + " is " +
+                                  str(conn.decoded_value_addrs[0]) + " to " +
+                                  str(conn.decoded_value_addrs[-1]))
+                    pop_idx += 1
 
         # perform clustering of 2D populations
+        if len(self.populations_2d) == 0:
+            log.info("No 2D populations")
+            self.population_clusters_2d = []
+        elif len(self.populations_2d) == 1:
+            log.info("Only one 2D population, clustering is trivial")
+            # fake the outcome of clustering
+            cluster_assignments = [1]
+            square_dist = np.array([[0.0]])
+        else:
+            log.info("Clustering 2D population groups")
+            dist = object_pdist(self.populations_2d, self.population_distance)
+            nonzero_dist = dist[dist > 0.0]
+            square_dist = scipy.spatial.distance.squareform(dist)
+            log.debug("Maximum distance is " + str(max(dist)))
+            log.debug("Minimum non-zero distance is " + str(min(nonzero_dist)))
+            log.debug("Average non-zero distance is " + str(np.mean(nonzero_dist)))
+            linkage = scipy.cluster.hierarchy.linkage(dist, method='single')
+            cluster_assignments = scipy.cluster.hierarchy.fcluster(linkage, criterion='maxclust',
+                                                                   t=self.target.total_population_2d_count)
+        if len(self.populations_2d) > 0:
+            log.info(str(max(cluster_assignments)-min(cluster_assignments)+1) + " clusters formed")
+            cluster_sizes = np.bincount(cluster_assignments)[1:]
+            log.debug("2D population cluster sizes: " + os.linesep + str(cluster_sizes))
+            # assign populations to clusters
+            self.population_clusters_2d = [ [] for i in range(max(cluster_assignments)) ]
+            self.cluster_principal_components_2d = []
+            self.cluster_pc_scale_factor_2d = []
+
+            for i in range(len(cluster_assignments)):
+                population = self.populations_2d[i]
+                population.population_list_idx = i # used to index into the distance matrix
+                cluster_idx = cluster_assignments[i] - 1 # our clusters start at 0
+                self.population_clusters_2d[cluster_idx].append(population)
+                population.cluster_idx = cluster_idx
+            # calculate the representative principal components of each cluster
+            log.info("Calculating clustered 2D principal components")
+            for cluster in self.population_clusters_2d:
+                # As before, calculate representative principal components by finding
+                # a representative population in each cluster.
+                candidate_idx = -1
+                candidate_minimum = np.inf
+                for challenger in cluster:
+                    max_distance = 0
+                    for matched in cluster:
+                        new_distance = square_dist[challenger.population_list_idx,
+                                                   matched.population_list_idx]
+                        if new_distance > max_distance:
+                            max_distance = new_distance
+                    if max_distance < candidate_minimum:
+                        candidate_idx = challenger.population_list_idx
+                        candidate_minimum = max_distance
+                candidate = self.populations_2d[candidate_idx]
+                log.debug("Selected population #" + str(candidate_idx) + 
+                          " (" + candidate.label + ") as candidate")
+                pc_rep = candidate.principal_components
+                # scale to +/-max_12bit_value
+                pc_max = np.absolute(pc_rep).max(axis=1)
+                scale_factors = []
+                for i in range(pc_rep.shape[0]):
+                    scale_factor = self.max_12bit_value / pc_max[i]
+                    scale_factors.append(scale_factor)
+                    for j in range(pc_rep.shape[1]):
+                        pc_rep[i, j] *= scale_factor
+                    log.debug("Scale factor for candidate's " + str(i)
+                              + "-order component: " + str(scale_factor))
+                self.cluster_pc_scale_factor_2d.append(scale_factors)
+                self.cluster_principal_components_2d.append(pc_rep)
+            # calculate representative filter coefficients for each cluster
+            log.info("Collecting filter coefficients for 2D clusters")
+            self.cluster_filters_2d = []
+            for cluster in self.population_clusters_2d:
+                n = len(cluster)
+                filters = set()
+                for population in cluster:
+                    for coefficient in population.filters:
+                        filters.add(coefficient)
+                # add zeros until we have at least two
+                filters = list(set(filters))
+                while len(filters) < 2:
+                    filters.append(0.0)
+                if len(filters) == 2:
+                    self.cluster_filters_2d.append(filters)
+                else:
+                    raise NotFeasibleError(
+                        "FIXME: cluster has >2 distinct filters, deal with this case")
+            # VERIFY: as before, at most 1024 populations per cluster.
+            for cluster in self.population_clusters_2d:
+                if len(cluster) > 1024:
+                    raise NotFeasibleError(
+                        "FIXME: cluster has >1024 populations, implement reassignment")
+            # FIXME do statistics on populations vs. cluster principal components
+            # as before, recompute decoders on all outgoing connections
+            # and assign addresses in DV address space.
+            # Even for 2D populations, population unit N connects to DV buffers 2N and 2N+1.
+            # So population #A running on population unit #N writes decoded value #D
+            # to address [NNNNNNN][DD][AAAAAAAAAA].
+            log.info("Calculating decoders for connections leaving 2D populations")
+            for clusterN in range(len(self.population_clusters_2d)):
+                cluster = self.population_clusters_2d[clusterN]
+                # cluster[clusterN] runs on population unit (95-clusterN) for 2D clusters
+                N = 95 - clusterN
+                scale_factor = self.cluster_pc_scale_factor_2d[clusterN]
+                log.debug("Scaling populations on unit " + str(N) + " with scale factor " +
+                          str(scale_factor))
+                pop_idx = 0
+                for population in cluster:
+                    decoder_idx = 0
+                    for conn in population.outputs:
+                        conn._decoders = np.real(conn._decoders)
+                        log.debug("old decoders for " + conn.label + ": " + str(conn._decoders))
+                        conn._decoders /= scale_factor
+                        log.debug("new decoders for " + conn.label + ": " + str(conn._decoders))
+                        decoders_max = np.absolute(conn._decoders).max()
+                        if decoders_max > self.max_12bit_value:
+                            log.warn("decoders for " + conn.label + " out of range (" +
+                                     str(decoders_max) + "), rescaling")
+                            decoder_scale_factor = self.max_12bit_value / decoders_max
+                            conn._decoders *= decoder_scale_factor
+                            conn.decoder_inverse_scale_factor = 1.0 / decoder_scale_factor
+                        else:
+                            conn.decoder_inverse_scale_factor = 1.0
+                        # VERIFY: N >= 0, D < 4, A < 1024
+                        if N < 0:
+                            raise NotFeasibleError("Inconsistency detected: more than 96 clusters")
+                        if decoder_idx >= 4 or decoder_idx + conn.dimensions > 4:
+                            raise NotFeasibleError("Inconsistency detected: population decodes more than 4 values")
+                        if pop_idx >= 1024:
+                            raise NotFeasibleError("Inconsistency detected: more than 1024 populations in cluster")
+                        # at this point, we can correctly assign addresses to this connection
+                        # TODO this also assumes single-board targets
+                        conn.decoded_value_addrs = []
+                        for i in range(conn.dimensions):
+                            conn.decoded_value_addrs.append( (N<<12) + (decoder_idx<<10) + (pop_idx))
+                            decoder_idx += 1
+                        log.debug("address range for " + conn.label + " is " + 
+                                  str(conn.decoded_value_addrs[0]) + " to " + 
+                                  str(conn.decoded_value_addrs[-1]))
+                    pop_idx += 1
 
         # we have now clustered all 1D and 2D populations onto population units,
         # assigned filter coefficients, and calculated decoders and DV addresses for
@@ -529,7 +684,57 @@ class Builder(object):
             self.cluster_encoders_1d.append( [filter0_encoders, filter1_encoders] )
         
         # calculate encoders for 2-D populations
+        log.info("Calculating encoders for 2-D populations")
         self.cluster_encoders_2d = []
+        for N in range(len(self.population_clusters_2d)):
+            cluster = self.population_clusters_2d[N]
+            filters = self.cluster_filters_2d[N]
+            # len(filters) == 2
+            filter0 = filters[0]
+            filter1 = filters[1]
+            # Each element of these arrays is an array (one per population) of tuples of the form
+            # (DV address, weight).
+            # However, for 2D populations, there are TWO encoders associated with each filter
+            # (one in each dimension).
+            filter0_encoders = [] # X filter 0
+            filter1_encoders = [] # X filter 1
+            filter2_encoders = [] # Y filter 0
+            filter3_encoders = [] # Y filter 1
+            for population in cluster:
+                population_encoders_0 = []
+                population_encoders_1 = []
+                population_encoders_2 = []
+                population_encoders_3 = []
+                # generate encoders
+                for conn in population.inputs:
+                    connection_encoders = self.generate_connection_encoders(conn)
+                    # len(connection_encoders) == 2
+                    if abs(conn.filter - filter0) <= abs(conn.filter - filter1):
+                        for encoder in connection_encoders[0]:
+                            population_encoders_0.append(encoder)
+                        for encoder in connection_encoders[1]:
+                            population_encoders_2.append(encoder)
+                    else:
+                        for encoder in connection_encoders[0]:
+                            population_encoders_1.append(encoder)
+                        for encoder in connection_encoders[1]:
+                            population_encoders_3.append(encoder)
+                filter0_encoders.append(population_encoders_0)
+                filter1_encoders.append(population_encoders_1)
+                filter2_encoders.append(population_encoders_2)
+                filter3_encoders.append(population_encoders_3)
+                log.debug("population " + population.label + " encoders by filter:")
+                log.debug("encoder 0 (filter=" + str(filter0) + "):")
+                log.debug(population_encoders_0)
+                log.debug("encoder 1 (filter=" + str(filter1) + "):")
+                log.debug(population_encoders_1)
+                log.debug("encoder 2 (filter=" + str(filter0) + "):")
+                log.debug(population_encoders_2)
+                log.debug("encoder 3 (filter=" + str(filter1) + "):")
+                log.debug(population_encoders_3)
+
+            self.cluster_encoders_2d.append( [filter0_encoders, filter1_encoders,
+                                              filter2_encoders, filter3_encoders] )
         
         # so, at this point, each element of self.cluster_encoders_(1|2)d
         # is a list E that has two elements for a 1-D population unit and four elements for a 2-D population unit.
@@ -565,7 +770,17 @@ class Builder(object):
                         if len(self.cluster_encoders_1d[cluster][encoder][i]) > 0:
                             emptySchedule = False
             # now count 2-D populations, which start at 95 and go down
-            # FIXME do this
+            for cluster in range(len(self.cluster_encoders_2d)):
+                for encoder in range(4):
+                    # if this cluster doesn't use this encoder, or this cluster
+                    # doesn't have an i-th population, don't schedule anything
+                    if ( len(self.cluster_encoders_2d[cluster]) < encoder+1
+                         or len(self.cluster_encoders_2d[cluster][encoder]) < i+1 ):
+                        schedule[(95 - cluster) * 4 + encoder] = []
+                    else:
+                        schedule[(95 - cluster) * 4 + encoder] = self.cluster_encoders_2d[cluster][encoder][i]
+                        if len(self.cluster_encoders_2d[cluster][encoder][i]) > 0:
+                            emptySchedule = False
             # perform scheduling and add the result to self.encoder_schedules
             if emptySchedule:
                 log.debug("ignoring empty encoder schedule in timeslice #" + str(i))
@@ -656,10 +871,9 @@ class Builder(object):
 
         log.info("writing encoder instruction buffers...")
 
-        for N in range(128):
+        for N in range(96):
             # if this population unit isn't used, program a single no-op on all encoders and continue
-            # FIXME check the 2D range as well
-            if N >= len(self.population_clusters_1d):
+            if N >= len(self.population_clusters_1d) and N <= 95 - len(self.population_clusters_2d):
                 # writing zero instructions to an encoder optimizes it out completely
                 log.debug("not programming encoders on unused population unit " + str(N))
                 continue
@@ -785,7 +999,44 @@ class Builder(object):
                     print(addr + "10" + ' ' + data, file=loadfile)
                     print(addr + "11" + ' ' + data, file=loadfile)
 
-        # FIXME now do it for 2D population units
+        for cN in range(self.target.total_population_2d_count):
+            N = 95 - cN
+            if cN < len(self.population_clusters_2d):
+
+                for F in range(4):
+                    pstc = self.cluster_filters_1d[N][F]
+                    if pstc == 0.0:
+                        log.debug("zeroing unused filter " + str(F) + " on population unit " + str(N))
+                        A = 0.0
+                        B = 0.0
+                    else:
+                        (A, B) = self.filter_coefs(pstc, self.model.dt)
+                    C = A
+                    D = B
+                    Nstr = pad(bin(N)[2:], '0', 7)
+                    Fstr = pad(bin(F)[2:], '0', 2)
+                    Astr = pad(float2sfixed(A), '0', 40)
+                    Bstr = pad(float2sfixed(B), '0', 40)
+                    Cstr = pad(float2sfixed(C), '0', 40)
+                    Dstr = pad(float2sfixed(D), '0', 40)
+                    addr = "010" + "00000000" + "00" + Nstr + Fstr # + CC
+                    print(addr + "00" + ' ' + Astr, file=loadfile)
+                    print(addr + "01" + ' ' + Bstr, file=loadfile)
+                    print(addr + "10" + ' ' + Cstr, file=loadfile)
+                    print(addr + "11" + ' ' + Dstr, file=loadfile)
+            else:
+                # program bogus filters for unused population unit
+                log.debug("zeroing filters on unused 2D population unit #" + str(N))
+                # FIXME is this necessary?
+                for F in range(4):
+                    Nstr = pad(bin(N)[2:], '0', 7)
+                    Fstr = pad(bin(F)[2:], '0', 2)
+                    data = pad('0', '0', 40)
+                    addr = "010" + "00000000" + "00" + Nstr + Fstr # + CC
+                    print(addr + "00" + ' ' + data, file=loadfile)
+                    print(addr + "01" + ' ' + data, file=loadfile)
+                    print(addr + "10" + ' ' + data, file=loadfile)
+                    print(addr + "11" + ' ' + data, file=loadfile)
 
         # 0x3: Principal Component LFSRs
         # this is an easy one. we have 4 LFSRs for each population unit,
@@ -802,7 +1053,14 @@ class Builder(object):
                 seed = np.random.random_integers(0, 2**32 - 1)
                 seedstr = pad(bin(seed)[2:], '0', 40)
                 print(addr + ' ' + seedstr, file=loadfile)
-        # FIXME now do it for 2D population units
+        for N in range(self.target.total_population_2d_count):
+            for L in range(4):
+                Nstr = pad(bin(95-N)[2:], '0', 7)
+                Lstr = pad(bin(L)[2:], '0', 2)
+                addr = "011" + "00000" + "0000000" + Nstr + Lstr
+                seed = np.random.random_integers(0, 2**32-1)
+                seedstr = pad(bin(seed)[2:], '0', 40)
+                print(addr + ' ' + seedstr, file=loadfile)
 
         # 0x4: Principal Component lookup tables
         # this is an easy one too although there's one place where we have to be careful
@@ -954,12 +1212,20 @@ class Builder(object):
     #  the purpose of that is to recover the correct decoded values when the decoders
     #  would have been out of range)
     def generate_connection_encoders(self, conn):
+        log.debug("Generating connection encoders for " + conn.label)
         connection_encoders = []
         for i in range(conn.post.dimensions):
             encoders = []
             decoded_value_addresses = conn.decoded_value_addrs
-            # transform[i, :] is the transform vector for the i-th dimension
-            transform_vector = conn.transform[i, :]
+            if conn.transform.ndim == 0:
+                # if conn.transform is a 0-D array, it is a scalar,
+                # so use that scalar for each decoded value
+                transform_vector = []
+                for i in range(len(decoded_value_addresses)):
+                    transform_vector.append(conn.transform[()])
+            else:
+                # transform[i, :] is the transform vector for the i-th dimension
+                transform_vector = conn.transform[i, :]
             # make sure these are the same size...
             if len(decoded_value_addresses) != len(transform_vector):
                 raise NotFeasibleError("connection " + conn.label + " associated with " + 
@@ -1044,10 +1310,14 @@ class Builder(object):
         # principal components and (unscaled) decoders
         log.debug("Calculating principal components")
         # we need 1024 eval points because that's how many samples we can store in hardware
-        # FIXME eval_points is slightly different for 2-dimensional populations
-        #eval_points = np.matrix([np.linspace(-1.0, 1.0, num=1024)]).transpose()
-        eval_points = np.array([np.linspace(-1.0, 1.0, 
-                                             num=1024)]).transpose()
+        if ens.dimensions == 1:
+            eval_points = np.array([np.linspace(-1.0, 1.0, 
+                                                 num=1024)]).transpose()
+        else:            
+            # FIXME number of samples
+            # FIXME do we want (-2,2) here?
+            eval_points = samplepoints2d(-1.0, 1.0, 0.1, -1.0, 1.0, 0.1)
+
         activities = ens.activities(eval_points)
         u, s, v = np.linalg.svd(activities.transpose())
         if ens.dimensions == 1:
@@ -1060,9 +1330,13 @@ class Builder(object):
         S[:s.shape[0], :s.shape[0]] = np.diag(s)
         # extend principal components to full representable range
         # FIXME this is also different for 2-dimensional populations
-        # FIXME use the *actual* representable range as a signed 12-bit fixed point value instead of +/-2.0
-        eval_points_extended = np.array([np.linspace(-2.0, self.max_12bit_value, 
-                                                       num=len(eval_points))]).transpose()
+        if ens.dimensions == 1:
+            eval_points_extended = np.array([np.linspace(-2.0, self.max_12bit_value, 
+                                                          num=len(eval_points))]).transpose()
+        else:
+            eval_points_extended = samplepoints2d(-2.0, self.max_12bit_value, 0.125,
+                                                   -2.0, self.max_12bit_value, 0.125)
+
         activities_extended = ens.activities(eval_points_extended)
         usi = np.linalg.pinv(np.dot(u,S))
         ens.principal_components = np.real(np.dot(usi[0:npc, :], activities_extended.transpose()))
