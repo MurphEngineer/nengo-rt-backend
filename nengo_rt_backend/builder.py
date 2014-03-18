@@ -90,8 +90,8 @@ def float2sfixed(f):
 # Values in the first dimension of the returned array run faster than
 # values in the second dimension.
 def samplepoints2d(x1, x2, xStep, y1, y2, yStep):
-    xRange = np.arange(x1, x2+xStep, xStep)
-    yRange = np.arange(y1, y2+yStep, yStep)
+    xRange = np.arange(x1, x2, xStep)
+    yRange = np.arange(y1, y2, yStep)
     result = []
     for y in yRange:
         for x in xRange:
@@ -1002,9 +1002,8 @@ class Builder(object):
         for cN in range(self.target.total_population_2d_count):
             N = 95 - cN
             if cN < len(self.population_clusters_2d):
-
                 for F in range(4):
-                    pstc = self.cluster_filters_1d[N][F]
+                    pstc = self.cluster_filters_2d[cN][F%2]
                     if pstc == 0.0:
                         log.debug("zeroing unused filter " + str(F) + " on population unit " + str(N))
                         A = 0.0
@@ -1072,7 +1071,10 @@ class Builder(object):
         # now, since we have the 1D principal components as vectors over that range,
         # starting at the low end, really all we have to do is swap the first 512 and last 512 samples,
         # and write that out in ascending order.
-        # for 2D population units, there are 15 PCs to program and addressing is harder. FIXME do it
+        # for 2D population units, there are 15 PCs to program and addressing is harder.
+        # The 10 address bits we want are AAAAAAAAAA = XXXXX YYYYY
+        # where each of X and Y go from 0 to 1.875 then from -2 to -0.125
+        # (equivalent to running from 00000 to 11111, or 0 to 31)
         # program at address [100 NNNNNNN PPPPAAA AAAAAAA]
         # where N is the population unit index,
         # P is the principal component index (0-6 for 1D, 0-14 for 2D),
@@ -1092,7 +1094,30 @@ class Builder(object):
                     addr = "100" + Nstr + Pstr + Astr
                     sampleStr = pad(float2sfixed(sample), '0', 40)
                     print(addr + ' ' + sampleStr, file=loadfile)
-        # FIXME now do it for 2D
+        for cN in range(len(self.population_clusters_2d)):
+           N = 95 - cN
+           for P in range(15):
+               pc = self.cluster_principal_components_2d[cN][P]
+               for X in range(32):
+                   for Y in range(32):
+                       if X >= 16:
+                           sampleX = X - 16
+                       else:
+                           sampleX = X + 16
+                       if Y >= 16:
+                           sampleY = Y - 16
+                       else:
+                           sampleY = Y + 16
+                       sample = pc[(sampleX<<5) + sampleY]
+
+                       Nstr = pad(bin(N)[2:], '0', 7)
+                       Pstr = pad(bin(P)[2:], '0', 4)
+                       Xstr = pad(bin(X)[2:], '0', 5)
+                       Ystr = pad(bin(Y)[2:], '0', 5)
+                       Astr = Xstr + Ystr
+                       addr = "100" + Nstr + Pstr + Astr
+                       sampleStr = pad(float2sfixed(sample), '0', 40)
+                       print(addr + ' ' + sampleStr, file=loadfile)
 
         # 0x5: Decoder circular buffers
         # loop over clusters, then populations, then outgoing connections.
@@ -1151,7 +1176,48 @@ class Builder(object):
                         print(addrStr + ' ' + decoderStr, file=loadfile)
                 pop_idx += 1
 
-        # FIXME now do it for 2D
+        for cN in range(len(self.population_clusters_2d)):
+            N = 95 - cN
+            Nstr = pad(bin(N)[2:], '0', 7)
+            cluster = self.population_clusters_2d[cN]
+            pop_idx = 0
+            for population in cluster:
+                decoder_idx = 0
+                for conn in population.outputs:
+                    for i in range(conn.dimensions):
+                        Vstr = pad(bin(decoder_idx)[2:], '0', 2)
+                        # new decoders: [[0], [1], [2], [3],...,[7]]
+                        decoders = conn._decoders
+                        for D in range(15):
+                            Dstr = pad(bin(D)[2:], '0', 4)                            
+                            decoder = decoders[0, D]
+                            decoderStr = pad(float2sfixed(decoder), '0', 40)
+                            addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
+                            print(addrStr + ' ' + decoderStr, file=loadfile)
+                        # write decoder 15 = "000000010100"
+                        print("101" + "00000000" + Nstr + Vstr + "1111" + ' ' + 
+                              pad("000000010100", '0', 40), file=loadfile)
+                        decoder_idx += 1
+                while decoder_idx < 4:
+                    Vstr = pad(bin(decoder_idx)[2:], '0', 2)
+                    # program a fake decoded value with all-zeroes decoders
+                    for D in range(16):
+                        Dstr = pad(bin(D)[2:], '0', 4)
+                        decoderStr = pad('0', '0', 40)
+                        addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
+                        print(addrStr + ' ' + decoderStr, file=loadfile)
+                    decoder_idx += 1
+                pop_idx += 1
+            while pop_idx < 1024:
+                # program a fake population with all-zeroes decoders
+                for decoder_idx in range(4):
+                    Vstr = pad(bin(decoder_idx)[2:], '0', 2)
+                    for D in range(16):
+                        Dstr = pad(bin(D)[2:], '0', 4)
+                        decoderStr = pad('0', '0', 40)
+                        addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
+                        print(addrStr + ' ' + decoderStr, file=loadfile)
+                pop_idx += 1
         
         # 0x6: Output channel instruction buffers
         # program at address "110 00 00000000 00000000 CCCCCCC"
@@ -1313,7 +1379,7 @@ class Builder(object):
         if ens.dimensions == 1:
             eval_points = np.array([np.linspace(-1.0, 1.0, 
                                                  num=1024)]).transpose()
-        else:            
+        elif ens.dimensions == 2: 
             # FIXME number of samples
             # FIXME do we want (-2,2) here?
             eval_points = samplepoints2d(-1.0, 1.0, 0.1, -1.0, 1.0, 0.1)
@@ -1329,11 +1395,10 @@ class Builder(object):
         S = np.zeros((u.shape[0], v.shape[0]), dtype=complex)
         S[:s.shape[0], :s.shape[0]] = np.diag(s)
         # extend principal components to full representable range
-        # FIXME this is also different for 2-dimensional populations
         if ens.dimensions == 1:
             eval_points_extended = np.array([np.linspace(-2.0, self.max_12bit_value, 
                                                           num=len(eval_points))]).transpose()
-        else:
+        elif ens.dimensions == 2:
             eval_points_extended = samplepoints2d(-2.0, self.max_12bit_value, 0.125,
                                                    -2.0, self.max_12bit_value, 0.125)
 
