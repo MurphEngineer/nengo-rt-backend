@@ -20,6 +20,7 @@ import nengo.nonlinearities
 
 # for visualization
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 log = logging.getLogger(__name__)
   
@@ -81,7 +82,8 @@ def float2sfixed(f):
         # take two's complement
         n = int(istr + fstr, 2)
         nc = 2**12 - n
-        return sgn + pad(bin(nc)[2:], "1", 11)
+#        return sgn + pad(bin(nc)[2:], "1", 11)
+        return pad(bin(nc)[2:], "1", 12)
     else:
         return sgn + istr + fstr
 
@@ -365,9 +367,11 @@ class Builder(object):
                         # (PC * decoder) = (PC * scale factor * 1/scale factor * decoder)
                         # = (PC * scale_factor) * (1/scale factor * decoder);
                         # adjust conn._decoders by 1/scale factor
-                        log.debug("old decoders for " + conn.label + ": " + str(conn._decoders))
+                        log.debug("old decoders for " + conn.label + ": ")
+                        log.debug(str(conn._decoders))
                         conn._decoders /= scale_factor
-                        log.debug("new decoders for " + conn.label + ": " + str(conn._decoders))
+                        log.debug("new decoders for " + conn.label + ": ")
+                        log.debug(str(conn._decoders))
                         decoders_max = np.absolute(conn._decoders).max()
                         if decoders_max > self.max_12bit_value:
                             log.warn("decoders for " + conn.label + " out of range (" + str(decoders_max) +
@@ -391,9 +395,8 @@ class Builder(object):
                         for i in range(conn.dimensions):
                             conn.decoded_value_addrs.append( (N << 12) + (decoder_idx << 10) + (pop_idx) )
                             decoder_idx += 1
-                        log.debug("address range for " + conn.label + " is " +
-                                  str(conn.decoded_value_addrs[0]) + " to " +
-                                  str(conn.decoded_value_addrs[-1]))
+                        log.debug("addresses for " + conn.label + " are " 
+                                  + str(conn.decoded_value_addrs))
                     pop_idx += 1
 
         # perform clustering of 2D populations
@@ -506,9 +509,11 @@ class Builder(object):
                     decoder_idx = 0
                     for conn in population.outputs:
                         conn._decoders = np.real(conn._decoders)
-                        log.debug("old decoders for " + conn.label + ": " + str(conn._decoders))
+                        log.debug("old decoders for " + conn.label + ": ")
+                        log.debug(str(conn._decoders))
                         conn._decoders /= scale_factor
-                        log.debug("new decoders for " + conn.label + ": " + str(conn._decoders))
+                        log.debug("new decoders for " + conn.label + ": ")
+                        log.debug(str(conn._decoders))
                         decoders_max = np.absolute(conn._decoders).max()
                         if decoders_max > self.max_12bit_value:
                             log.warn("decoders for " + conn.label + " out of range (" +
@@ -531,9 +536,8 @@ class Builder(object):
                         for i in range(conn.dimensions):
                             conn.decoded_value_addrs.append( (N<<12) + (decoder_idx<<10) + (pop_idx))
                             decoder_idx += 1
-                        log.debug("address range for " + conn.label + " is " + 
-                                  str(conn.decoded_value_addrs[0]) + " to " + 
-                                  str(conn.decoded_value_addrs[-1]))
+                        log.debug("addresses for " + conn.label + " are " + 
+                                  str(conn.decoded_value_addrs))
                     pop_idx += 1
 
         # we have now clustered all 1D and 2D populations onto population units,
@@ -948,6 +952,10 @@ class Builder(object):
                                     Pstr = '0'
                                 Astr = pad(bin(op.readInfo[0])[2:], '0', 19)
                                 Wstr = float2sfixed(op.readInfo[1])
+                                # sanity check
+                                if len(Wstr) != 12:
+                                    raise NotFeasibleError("sanity check failed: incorrect conversion of float " 
+                                                               + str(op.readInfo[1]) + " to sfixed '" + Wstr + "', wrong length " + str(len(Wstr)))
                                 insnStr = Lstr + Tstr + Pstr + Astr + Wstr
                                 print(addrStr + ' ' + insnStr, file=loadfile)
 
@@ -1109,7 +1117,8 @@ class Builder(object):
                        else:
                            sampleY = Y + 16
                        sample = pc[(sampleX<<5) + sampleY]
-
+                       if P == 2 or P == 1: # DEBUGGING. the first and second order PCs are the significant ones for van der Pol
+                           log.debug("P" + str(P) + ": " + str(sampleX) + " " + str(sampleY) + " " + str(sample))
                        Nstr = pad(bin(N)[2:], '0', 7)
                        Pstr = pad(bin(P)[2:], '0', 4)
                        Xstr = pad(bin(X)[2:], '0', 5)
@@ -1190,7 +1199,7 @@ class Builder(object):
                         decoders = conn._decoders
                         for D in range(15):
                             Dstr = pad(bin(D)[2:], '0', 4)                            
-                            decoder = decoders[0, D]
+                            decoder = decoders[i, D]
                             decoderStr = pad(float2sfixed(decoder), '0', 40)
                             addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
                             print(addrStr + ' ' + decoderStr, file=loadfile)
@@ -1405,6 +1414,18 @@ class Builder(object):
         activities_extended = ens.activities(eval_points_extended)
         usi = np.linalg.pinv(np.dot(u,S))
         ens.principal_components = np.real(np.dot(usi[0:npc, :], activities_extended.transpose()))
+        # visualize
+        # for n in range(npc):
+        #     pc = ens.principal_components[n]
+        #     pc2D = np.reshape(pc, (32, 32))
+        #     x2D = np.reshape(eval_points_extended[:,0], (32, 32))
+        #     y2D = np.reshape(eval_points_extended[:,1], (32, 32))
+        #     fig = plt.figure()
+        #     ax = fig.add_subplot(111, projection='3d')
+        #     ax.plot_surface(x2D, y2D, pc2D, cmap=plt.get_cmap('jet'))
+        #     plt.title('Principal Component ' + str(n))
+        # plt.show()            
+
         # we have to save a few values in order to calculate approximate decoders later on
         ens.pc_u = u
         ens.pc_S = S
