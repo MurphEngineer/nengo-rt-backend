@@ -1118,7 +1118,7 @@ class Builder(object):
                            sampleY = Y + 16
                        sample = pc[(sampleX<<5) + sampleY]
                        if P == 2 or P == 1: # DEBUGGING. the first and second order PCs are the significant ones for van der Pol
-                           log.debug("P" + str(P) + ": " + str(sampleX) + " " + str(sampleY) + " " + str(sample))
+                           log.debug("P" + str(P) + ": " + str(X) + " " + str(Y) + " " + str(sample))
                        Nstr = pad(bin(N)[2:], '0', 7)
                        Pstr = pad(bin(P)[2:], '0', 4)
                        Xstr = pad(bin(X)[2:], '0', 5)
@@ -1293,11 +1293,18 @@ class Builder(object):
             encoders = []
             decoded_value_addresses = conn.decoded_value_addrs
             if conn.transform.ndim == 0:
+                log.debug("Scalar transform, check this case")
+                log.debug("transform = " + str(conn.transform))
+                log.debug("pre dim = " + str(conn.pre.output_dimensions))
+                log.debug("pre y(0) = " + str(conn.pre.initial_value))
                 # if conn.transform is a 0-D array, it is a scalar,
                 # so use that scalar for each decoded value
                 transform_vector = []
-                for i in range(len(decoded_value_addresses)):
-                    transform_vector.append(conn.transform[()])
+                for j in range(len(decoded_value_addresses)):
+                    if i == j: # dimensions match
+                        transform_vector.append(conn.transform[()])
+                    else:
+                        transform_vector.append(0.0)
             else:
                 # transform[i, :] is the transform vector for the i-th dimension
                 transform_vector = conn.transform[i, :]
@@ -1314,7 +1321,8 @@ class Builder(object):
                 # otherwise, don't touch the weight;
                 # this attribute won't be set for, e.g., connections leaving nodes
                 # because these connections don't have decoders
-                encoders.append( (dv_addr, weight) )
+                if weight != 0.0:
+                    encoders.append( (dv_addr, weight) )
             connection_encoders.append(encoders)
         return connection_encoders
 
@@ -1416,14 +1424,14 @@ class Builder(object):
         ens.principal_components = np.real(np.dot(usi[0:npc, :], activities_extended.transpose()))
         # visualize
         # for n in range(npc):
-        #     pc = ens.principal_components[n]
-        #     pc2D = np.reshape(pc, (32, 32))
-        #     x2D = np.reshape(eval_points_extended[:,0], (32, 32))
-        #     y2D = np.reshape(eval_points_extended[:,1], (32, 32))
-        #     fig = plt.figure()
-        #     ax = fig.add_subplot(111, projection='3d')
-        #     ax.plot_surface(x2D, y2D, pc2D, cmap=plt.get_cmap('jet'))
-        #     plt.title('Principal Component ' + str(n))
+        #      pc = ens.principal_components[n]
+        #      pc2D = np.reshape(pc, (32, 32))
+        #      x2D = np.reshape(eval_points_extended[:,0], (32, 32))
+        #      y2D = np.reshape(eval_points_extended[:,1], (32, 32))
+        #      fig = plt.figure()
+        #      ax = fig.add_subplot(111, projection='3d')
+        #      ax.plot_surface(x2D, y2D, pc2D, cmap=plt.get_cmap('jet'))
+        #      plt.title('Principal Component ' + str(n))
         # plt.show()            
 
         # we have to save a few values in order to calculate approximate decoders later on
