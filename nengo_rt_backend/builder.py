@@ -1117,8 +1117,6 @@ class Builder(object):
                        else:
                            sampleY = Y + 16
                        sample = pc[(sampleX<<5) + sampleY]
-                       if P == 2 or P == 1: # DEBUGGING. the first and second order PCs are the significant ones for van der Pol
-                           log.debug("P" + str(P) + ": " + str(X) + " " + str(Y) + " " + str(sample))
                        Nstr = pad(bin(N)[2:], '0', 7)
                        Pstr = pad(bin(P)[2:], '0', 4)
                        Xstr = pad(bin(X)[2:], '0', 5)
@@ -1195,11 +1193,11 @@ class Builder(object):
                 for conn in population.outputs:
                     for i in range(conn.dimensions):
                         Vstr = pad(bin(decoder_idx)[2:], '0', 2)
-                        # new decoders: [[0], [1], [2], [3],...,[7]]
+                        # new decoders: [[0], [1], [2], [3],...,[15]]
                         decoders = conn._decoders
                         for D in range(15):
                             Dstr = pad(bin(D)[2:], '0', 4)                            
-                            decoder = decoders[i, D]
+                            decoder = decoders[(conn.dimensions-1) - i, D] # need to investigate WHY these are backwards, and whether that's true for e.g. a 3D output
                             decoderStr = pad(float2sfixed(decoder), '0', 40)
                             addrStr = "101" + "00000000" + Nstr + Vstr + Dstr
                             print(addrStr + ' ' + decoderStr, file=loadfile)
@@ -1293,12 +1291,8 @@ class Builder(object):
             encoders = []
             decoded_value_addresses = conn.decoded_value_addrs
             if conn.transform.ndim == 0:
-                log.debug("Scalar transform, check this case")
-                log.debug("transform = " + str(conn.transform))
-                log.debug("pre dim = " + str(conn.pre.output_dimensions))
-                log.debug("pre y(0) = " + str(conn.pre.initial_value))
                 # if conn.transform is a 0-D array, it is a scalar,
-                # so use that scalar for each decoded value
+                # so use that scalar for the appropriate dimension and 0s elsewhere
                 transform_vector = []
                 for j in range(len(decoded_value_addresses)):
                     if i == j: # dimensions match

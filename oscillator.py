@@ -16,11 +16,15 @@ input = nengo.Node(output=nengo.helpers.piecewise({0:[1,0], 0.1: [0,0]}), label=
 
 tau = 0.1
 freq = 5.0
+scale = 1.0
 i2o = nengo.Connection(input, neurons)
-o2o = nengo.Connection(neurons, neurons, transform=[[1,-freq*tau], [freq*tau,1]], filter=tau)
+o2o = nengo.Connection(neurons, neurons, transform=
+                       [[scale*1,scale*-freq*tau], 
+                        [scale*freq*tau,scale*1]], 
+                       filter=tau)
 
 input_probe = nengo.Probe(input, 'output')
-neuron_probe = nengo.Probe(neurons, 'decoded_output', filter=tau)
+neuron_probe = nengo.Probe(neurons, 'decoded_output', filter=0.005)
 
 if hardware:
     # hardware simulation
