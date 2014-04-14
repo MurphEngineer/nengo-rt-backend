@@ -70,7 +70,7 @@ def float2sfixed(f):
         f = f * -1
     else:
         sgn = "0"
-    if f >= 2047.0 / 1024.0:
+    if f > 2047.0 / 1024.0:
         log.warn("clamped unrepresentable value " + str(f))
         f = 2047.0 / 1024.0 # largest representable value
     ipart = int(math.floor(f))
