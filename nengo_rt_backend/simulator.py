@@ -10,6 +10,10 @@ import numpy as np
 
 import nengo
 from .builder import Builder
+from .target import Target
+from .programmer import EthernetProgrammer
+
+from time import sleep
 
 log = logging.getLogger(__name__)
 
@@ -17,11 +21,35 @@ class Simulator(object):
     
     def __init__(self, model, dt=0.001, seed=None, builder=None, targetFile=None):
         if builder is None:
-            builder = Builder(targetFile)
+            self.builder = Builder(targetFile)
+        else:
+            self.builder = builder
             
-        self.model = builder(model, dt)
+        self.model = self.builder(model, dt)
 
     def run(self, time_in_seconds):
         """Simulate for the given length of time."""
-        # FIXME reset, program, and control the board
-        pass
+        target = self.builder.target
+        board = target.boards[0] # FIXME multi-board
+        # choose the first controller we recognize and use that for programming
+        programmer = None
+        for ctrl in board.controls:
+            if ctrl.type == 'ethernet':
+                programmer = EthernetProgrammer(self.builder.filename,
+                                                ctrl.mac_address, ctrl.device)
+                break
+            else:
+                log.warn("ignoring unknown control type '" + ctrl.type + "'")
+
+        if programmer is None:
+            raise ValueError("no suitable control interface found for this board")
+        
+        log.info("programming...")
+        programmer.program()
+        log.info("starting hardware simulation")
+        programmer.start()
+        # FIXME everything else
+        sleep(time_in_seconds)
+        log.info("done, pausing")
+        programmer.pause()
+        
