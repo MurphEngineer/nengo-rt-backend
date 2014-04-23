@@ -63,7 +63,7 @@ class Board(object):
             elif child.tag == 'input':
                 pass
             elif child.tag == 'control':
-                pass
+                self.controls.append(Control(child))
             elif child.tag == 'io':
                 pass
             else:
@@ -85,9 +85,23 @@ class Input(object):
         self.last_dv_index = 0
 
 class Control(object):
-    def __init__(self):
-        self.name = "(unnamed control)"
-        self.type = ""
+    def __init__(self, root):
+        if root is None:
+            self.name = "(unnamed control)"
+            self.type = ""
+        else:
+            self.parseRoot(root)
+
+    def parseRoot(self, root):
+        self.name = getkey(root.attrib, 'name', "(unnamed control)")
+        self.type = getkey(root.attrib, 'type', "")
+        if self.type == '':
+            raise ValueError("control type unspecified for " + self.name + 
+                             " while parsing board " + self.name)
+        # type-specific attrs
+        if self.type == 'ethernet':
+            self.mac_address = getkey(root.attrib, 'mac_address', "")
+            self.device = getkey(root.attrib, 'device', "")
 
 class IO(object):
     def __init__(self):
