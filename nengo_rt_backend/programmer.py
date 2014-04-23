@@ -22,6 +22,12 @@ class Programmer(object):
     def start(self):
         raise NotImplementedError("Programmer must implement start()")
 
+    def pause(self):
+        raise NotImplementedError("Programmer must implement pause()")
+    
+    def step(self):
+        raise NotImplementedError("Programmer must implement step()")
+
 class EthernetProgrammer(Programmer):
 
     def __init__(self, loadfile, mac_address, device):
@@ -44,7 +50,13 @@ class EthernetProgrammer(Programmer):
         sleep(0.1)
 
     def start(self):
-        pass # FIXME
+        self.sock.send(self.makeframe_START())
+
+    def pause(self):
+        self.sock.send(self.makeframe_PAUSE())
+
+    def step(self):
+        self.sock.send(self.makeframe_STEP())
 
     def binstring(self, s):
         retval = []
@@ -66,6 +78,12 @@ class EthernetProgrammer(Programmer):
 
     def makeframe_RESET(self):
         return self.makeframe(bytes([255]), b"") # 0xff
+    def makeframe_START(self):
+        return self.makeframe(bytes([254]), b"") # 0xfe
+    def makeframe_STEP(self):
+        return self.makeframe(bytes([253]), b"") # 0xfd
+    def makeframe_PAUSE(self):
+        return self.makeframe(bytes([252]), b"") # 0xfc
 
     def program(self):
         log.debug("programming " + self.dst_addr_str + " via " + self.device)

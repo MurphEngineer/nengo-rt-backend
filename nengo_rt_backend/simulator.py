@@ -13,6 +13,8 @@ from .builder import Builder
 from .target import Target
 from .programmer import EthernetProgrammer
 
+from time import sleep
+
 log = logging.getLogger(__name__)
 
 class Simulator(object):
@@ -43,5 +45,11 @@ class Simulator(object):
             raise ValueError("no suitable control interface found for this board")
         
         log.info("programming...")
-        programmer.program();
+        programmer.program()
+        log.info("starting hardware simulation")
+        programmer.start()
+        # FIXME everything else
+        sleep(time_in_seconds)
+        log.info("done, pausing")
+        programmer.pause()
         
