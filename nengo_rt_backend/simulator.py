@@ -90,11 +90,14 @@ class Simulator(object):
         log.info("starting free-running hardware simulation")
         self.controller.start()
         
-        simulationStartTime = time.perf_counter();
+        simulationStartTime = time.perf_counter(); # relative time
         run = True
-        lastTime = simulationStartTime # time
+        currentSimulationTime = self.elapsedTime # absolute time
+        stepStartTime = simulationStartTime
         while run:
-            stepStartTime = time.perf_counter()
+            lastStepTime = stepStartTime
+            stepStartTime = time.perf_counter() # relative time
+            currentSimulationTime += stepStartTime - lastStepTime
             if stepStartTime - simulationStartTime + self.dt >= time_in_seconds:
                 run = False # finish after this step
             # receive output from the board
@@ -109,7 +112,20 @@ class Simulator(object):
             for probe in self.builder.probes:
                 self.probe_data[probe].append( list(probe_buffer[probe]) )
             # send input to the board
-            # FIXME
+            sentValues = []
+            for node in self.builder.nodes:
+                # the nodes are assigned addresses in this (ascending) order,
+                # so iterating over them should give us consecutive outputs
+                if node.optimized_out:
+                    continue
+                if len(node.inputs) == 0:
+                    # output is only a function of simulation time
+                    output = node.output(currentSimulationTime)
+                else:
+                    raise NotImplementedError("state-dependent nodes not yet supported")
+                for val in output:
+                    sentValues.append(val)
+            self.ioctrl.send(sentValues)
             
         log.info("done, pausing")
         self.controller.pause()

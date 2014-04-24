@@ -85,14 +85,18 @@ class EthernetController(Controller):
     def makeframe_PAUSE(self):
         return self.makeframe(bytes([252]), b"") # 0xfc
 
-    def program(self):
-        log.debug("programming " + self.dst_addr_str + " via " + self.device)
+    def get_mac_address(self):
         # FIXME this may not be portable to non-POSIX systems
         info = fcntl.ioctl(self.sock.fileno(), 0x8927, struct.pack('256s', 
                                                            bytearray(self.device[:15], 'UTF-8')
                                                            ))
-        self.src_addr = info[18:24]
-        self.src_addr_str = ''.join(['%02x' % char for char in info[18:24]])
+        return info[18:24]
+
+    def program(self):
+        log.debug("programming " + self.dst_addr_str + " via " + self.device)
+        
+        self.src_addr = self.get_mac_address()
+        self.src_addr_str = ''.join(['%02x' % char for char in self.src_addr])
         log.debug("local MAC address on device is " + self.src_addr_str)        
         # reset
         self.reset()

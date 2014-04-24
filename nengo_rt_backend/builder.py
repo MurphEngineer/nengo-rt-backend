@@ -569,6 +569,7 @@ class Builder(object):
                     # OPTIMIZATION: output is a constant.
                     output_signal = [node.output]
                     log.debug("optimizing out node " + node.label + ", constant " + str(output_signal))
+                    node.optimized_out = True
                     node.initial_value = output_signal
                     node.output_dimensions = 1
                     node.output_addrs = [input_address]
@@ -580,6 +581,7 @@ class Builder(object):
                     # Assuming we just treat this as a 2-D output in rectangular form.
                     output_signal = [node.output.real, node.output.imag]
                     log.debug("optimizing out node " + node.label + ", constant " + str(output_signal))
+                    node.optimized_out = True
                     node.initial_value = output_signal
                     node.output_dimensions = 2
                     node.output_addrs = [input_address, input_address+1]
@@ -604,6 +606,7 @@ class Builder(object):
                 if node.output is None:
                     # in this special case, Nengo says that the output is the identity function
                     log.debug("optimizing out node " + node.label + ", identity function")
+                    node.optimized_out = True
                     # if the transform is also identity, this should be as easy as
                     # re-mapping the addresses of incoming connections onto the outgoing ones...
                     # FIXME
@@ -1456,6 +1459,7 @@ class Builder(object):
         node.inputs = []
         node.outputs = []
         node.dv_addrs_done = False
+        node.optimized_out = False
 
     def build_probe(self, probe):
         # set up input array to be filled with connections

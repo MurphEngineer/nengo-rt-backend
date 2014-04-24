@@ -28,7 +28,7 @@ neuron_probe = nengo.Probe(neurons, 'decoded_output', filter=0.005)
 
 if hardware:
     # hardware simulation
-    sim = nengo_rt_backend.Simulator(model, targetFile='target_1d2d.xml', keep=True)
+    sim = nengo_rt_backend.Simulator(model, targetFile='target_1d2d.xml', keep=False)
 else:
     # software simulation
     sim = nengo.Simulator(model)
