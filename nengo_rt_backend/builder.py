@@ -119,7 +119,7 @@ class Builder(object):
             raise ValueError("Timestep must be 0.001 for this backend")
 
         # attempt to call the default Nengo builder on the model.
-        builder = nengo.builder.Builder(copy=True)
+        builder = nengo.builder.Builder(copy=False)
         self.model = builder(model, dt)
         self.model.dt = dt
         if self.model.seed is None:
@@ -1251,10 +1251,22 @@ class Builder(object):
         # all probes go to channel 0 automatically
         addrStr = "110000000000000000000000"
         probed_addresses = set()
+        # keep a dictionary mapping addresses to the probes that care about them
+        self.probe_address_table = {}
         for probe in self.probes:
+            # keep a dictionary mapping addresses to input dimension for each probe
+            probe.dimension_address_table = {}
+            dimension = 0
             for conn in probe.inputs:
                 for addr in conn.decoded_value_addrs:
                     probed_addresses.add(addr)
+                    if addr in self.probe_address_table:
+                        self.probe_address_table[addr].append(probe)
+                    else:
+                        self.probe_address_table[addr] = [probe]
+                    probe.dimension_address_table[addr] = dimension
+                    dimension += 1
+            probe.dimensions = dimension
         log.debug("Probes at addresses " + str(probed_addresses))
         if len(probed_addresses) <= 512:
             probed_addresses = list(probed_addresses)
@@ -1279,6 +1291,7 @@ class Builder(object):
         # 0x7: not used
         log.info("finished writing loadfile")
         loadfile.close()
+        return self.model
 
     # The encoder performs [DV address * transform weight] * connection inverse scale factor
     # (where the inverse scale factor is 1.0 if it does not exist;

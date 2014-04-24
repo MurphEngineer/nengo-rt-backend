@@ -117,8 +117,14 @@ if makePlots:
     plt.show()
 
 # now attempt this in hardware
-sim = nengo_rt_backend.Simulator(model, targetFile='target_basicboard.xml')
+sim = nengo_rt_backend.Simulator(model, targetFile='target_1d2d.xml')
 sim.run(6)
+t = sim.trange()
+fh = plt.figure()
+plt.plot(t, sim.data(p1), label="Input")
+plt.plot(t, sim.data(p2), 'k', label="Integrator output")
+plt.legend()
+fh.suptitle('Hardware simulation output')
+plt.show()
 
-# FIXME get input
 

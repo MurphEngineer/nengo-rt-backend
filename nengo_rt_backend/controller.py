@@ -8,30 +8,30 @@ import fcntl
 
 log = logging.getLogger(__name__)
 
-class Programmer(object):
+class Controller(object):
     
     def __init__(self, loadfile):
         self.loadfile = loadfile
 
     def reset(self):
-        raise NotImplementedError("Programmer must implement reset()")
+        raise NotImplementedError("Controller must implement reset()")
 
     def program(self):
-        raise NotImplementedError("Programmer must implement program()")
+        raise NotImplementedError("Controller must implement program()")
 
     def start(self):
-        raise NotImplementedError("Programmer must implement start()")
+        raise NotImplementedError("Controller must implement start()")
 
     def pause(self):
-        raise NotImplementedError("Programmer must implement pause()")
+        raise NotImplementedError("Controller must implement pause()")
     
     def step(self):
-        raise NotImplementedError("Programmer must implement step()")
+        raise NotImplementedError("Controller must implement step()")
 
-class EthernetProgrammer(Programmer):
+class EthernetController(Controller):
 
     def __init__(self, loadfile, mac_address, device):
-        Programmer.__init__(self, loadfile)
+        Controller.__init__(self, loadfile)
         self.dst_addr_str = mac_address # as a string
         # similar to binstring() but the reverse operation and for hex bytes
         self.dst_addr = []

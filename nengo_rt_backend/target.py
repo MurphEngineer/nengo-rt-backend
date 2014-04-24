@@ -59,30 +59,42 @@ class Board(object):
         self.population_2d_count = int(getkey(root.attrib, 'population_2d_count', 0))
         for child in root: # FIXME finish parsing
             if child.tag == 'output':
-                pass
+                self.outputs.append(Output(child))
             elif child.tag == 'input':
-                pass
+                self.outputs.append
             elif child.tag == 'control':
                 self.controls.append(Control(child))
             elif child.tag == 'io':
-                pass
+                self.ios.append(IO(child))
             else:
                 raise ValueError("unknown element type " + child.tag +
                                  " encountered while parsing board " + self.name)
 
 class Output(object):
-    def __init__(self):
-        self.name = "(unnamed output)"
-        self.index = 0
-        self.first_dv_index = 0
-        self.last_dv_index = 0
+    def __init__(self, root=None):
+        if root is None:
+            self.name = "(unnamed output)"
+            self.index = 0
+            self.first_dv_index = 0
+            self.last_dv_index = 0
+        else:
+            self.name = getkey(root.attrib, 'name', '(unnamed output)')
+            self.index = int(getkey(root.attrib, 'index', 0))
+            self.first_dv_index = int(getkey(root.attrib, 'first_dv_index', 0))
+            self.last_dv_index = int(getkey(root.attrib, 'last_dv_index', 0))
 
 class Input(object):
-    def __init__(self):
-        self.name = "(unnamed input)"
-        self.index = 0
-        self.first_dv_index = 0
-        self.last_dv_index = 0
+    def __init__(self, root=None):
+        if root is None:
+            self.name = "(unnamed input)"
+            self.index = 0
+            self.first_dv_index = 0
+            self.last_dv_index = 0
+        else:
+            self.name = getkey(root.attrib, 'name', '(unnamed input)')
+            self.index = int(getkey(root.attrib, 'index', 0))
+            self.first_dv_index = int(getkey(root.attrib, 'first_dv_index', 0))
+            self.last_dv_index = int(getkey(root.attrib, 'last_dv_index', 0))
 
 class Control(object):
     def __init__(self, root):
@@ -97,15 +109,30 @@ class Control(object):
         self.type = getkey(root.attrib, 'type', "")
         if self.type == '':
             raise ValueError("control type unspecified for " + self.name + 
-                             " while parsing board " + self.name)
+                             " while parsing board")
         # type-specific attrs
         if self.type == 'ethernet':
             self.mac_address = getkey(root.attrib, 'mac_address', "")
             self.device = getkey(root.attrib, 'device', "")
 
 class IO(object):
-    def __init__(self):
-        self.name = "(unnamed I/O)"
-        self.type = ""
-        self.input = ""
-        self.output = ""
+    def __init__(self, root=None):
+        if root is None:
+            self.type = ""
+            self.input = ""
+            self.output = ""
+        else:
+            self.type = getkey(root.attrib, 'type', "")
+            if self.type == '':
+                raise ValueError("I/O type unspecified for some io while parsing board")
+            self.input = getkey(root.attrib, 'input', "")
+            if self.input == '':
+                raise ValueError("I/O input unspecified for some io while parsing board")
+            self.output = getkey(root.attrib, 'output', "")
+            if self.output == '':
+                raise ValueError("I/O output unspecified for some io while parsing board")
+            # type-specific attrs
+            if self.type == 'ethernet':
+                self.mac_address = getkey(root.attrib, 'mac_address', "")
+                self.device = getkey(root.attrib, 'device', "")
+
