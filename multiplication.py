@@ -16,8 +16,8 @@ B = nengo.Ensemble(nengo.LIF(100), dimensions=1, radius=1.4, label='B')
 combined = nengo.Ensemble(nengo.LIF(224), dimensions=2, radius=2, label='combined')
 prod = nengo.Ensemble(nengo.LIF(100), dimensions=1, radius=2, label='prod')
 
-inputA = nengo.Node(nengo.helpers.piecewise({0: 0, 2.5: 0.5, 4: -0.5}))
-inputB = nengo.Node(nengo.helpers.piecewise({0: 1.0, 1.5: 0.8, 3: 0.0, 4.5: 0.8}))
+inputA = nengo.Node(nengo.helpers.piecewise({0: 0, 2.5: 0.5, 4: -0.5}), label='input-A')
+inputB = nengo.Node(nengo.helpers.piecewise({0: 1.0, 1.5: 0.8, 3: 0.0, 4.5: 0.8}), label='input-B')
 
 nengo.Connection(inputA, A)
 nengo.Connection(inputB, B)
@@ -40,15 +40,15 @@ prod_probe = nengo.Probe(prod, 'decoded_output', filter=0.01)
 if hardware:
     # hardware simulation
     sim = nengo_rt_backend.Simulator(model, targetFile='target_1d2d.xml')
-    sim.run(5)
 else:
     # software simulation
     sim = nengo.Simulator(model)
-    sim.run(5)
-    plt.figure(1)
-    plt.plot(sim.trange(), sim.data(A_probe), label='Decoded A')
-    plt.plot(sim.trange(), sim.data(B_probe), label='Decoded B')
-    plt.plot(sim.trange(), sim.data(prod_probe), label='Decoded product')
-    plt.xlabel('Time (s)', fontsize='large')
-    plt.legend(loc='best')
-    plt.show()
+
+sim.run(5)
+plt.figure(1)
+plt.plot(sim.trange(), sim.data(A_probe), label='Decoded A')
+plt.plot(sim.trange(), sim.data(B_probe), label='Decoded B')
+plt.plot(sim.trange(), sim.data(prod_probe), label='Decoded product')
+plt.xlabel('Time (s)', fontsize='large')
+plt.legend(loc='best')
+plt.show()

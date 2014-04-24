@@ -123,8 +123,11 @@ class Simulator(object):
                     output = node.output(currentSimulationTime)
                 else:
                     raise NotImplementedError("state-dependent nodes not yet supported")
-                for val in output:
-                    sentValues.append(val)
+                if output.ndim == 0:
+                    sentValues.append(output)
+                else:
+                    for val in output:
+                        sentValues.append(val)
             self.ioctrl.send(sentValues)
             
         log.info("done, pausing")
