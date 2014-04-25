@@ -516,7 +516,7 @@ class Builder(object):
                 for population in cluster:
                     decoder_idx = 0
                     for conn in population.outputs:
-                        rep = self.cluster_representatives_1d[clusterN]
+                        rep = self.cluster_representatives_2d[clusterN]
                         self.recompute_decoders(rep, conn)
                         conn._decoders = np.real(conn._decoders)
 
