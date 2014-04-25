@@ -266,6 +266,7 @@ class Builder(object):
             self.population_clusters_1d = [ [] for i in range(max(cluster_assignments)) ]
             self.cluster_principal_components_1d = []
             self.cluster_pc_scale_factor_1d = []
+            self.cluster_representatives_1d = []
 
             for i in range(len(cluster_assignments)):
                 population = self.populations_1d[i]
@@ -296,6 +297,7 @@ class Builder(object):
                 candidate = self.populations_1d[candidate_idx]
                 log.debug("Selected population #" + str(candidate_idx) + 
                           "( " + candidate.label + ") as candidate")
+                self.cluster_representatives_1d.append(candidate)
                 pc_rep = candidate.principal_components
                 # scale to +/-max_12bit_value
                 pc_max = np.absolute(pc_rep).max(axis=1)
@@ -363,14 +365,18 @@ class Builder(object):
                 for population in cluster:
                     decoder_idx = 0
                     for conn in population.outputs:
+                        # recompute decoders wrt. representative population
+                        rep = self.cluster_representatives_1d[N]
+                        self.recompute_decoders(rep, conn)
                         conn._decoders = np.real(conn._decoders)
+
                         # (PC * decoder) = (PC * scale factor * 1/scale factor * decoder)
                         # = (PC * scale_factor) * (1/scale factor * decoder);
                         # adjust conn._decoders by 1/scale factor
-                        log.debug("old decoders for " + conn.label + ": ")
+                        log.debug("recalculated decoders for " + conn.label + ": ")
                         log.debug(str(conn._decoders))
                         conn._decoders /= scale_factor
-                        log.debug("new decoders for " + conn.label + ": ")
+                        log.debug("scaled decoders for " + conn.label + ": ")
                         log.debug(str(conn._decoders))
                         decoders_max = np.absolute(conn._decoders).max()
                         if decoders_max > self.max_12bit_value:
@@ -427,6 +433,7 @@ class Builder(object):
             self.population_clusters_2d = [ [] for i in range(max(cluster_assignments)) ]
             self.cluster_principal_components_2d = []
             self.cluster_pc_scale_factor_2d = []
+            self.cluster_representatives_2d = []
 
             for i in range(len(cluster_assignments)):
                 population = self.populations_2d[i]
@@ -454,6 +461,7 @@ class Builder(object):
                 candidate = self.populations_2d[candidate_idx]
                 log.debug("Selected population #" + str(candidate_idx) + 
                           " (" + candidate.label + ") as candidate")
+                self.cluster_representatives_2d.append(candidate)
                 pc_rep = candidate.principal_components
                 # scale to +/-max_12bit_value
                 pc_max = np.absolute(pc_rep).max(axis=1)
@@ -508,7 +516,10 @@ class Builder(object):
                 for population in cluster:
                     decoder_idx = 0
                     for conn in population.outputs:
+                        rep = self.cluster_representatives_1d[clusterN]
+                        self.recompute_decoders(rep, conn)
                         conn._decoders = np.real(conn._decoders)
+
                         log.debug("old decoders for " + conn.label + ": ")
                         log.debug(str(conn._decoders))
                         conn._decoders /= scale_factor
@@ -790,7 +801,7 @@ class Builder(object):
                             emptySchedule = False
             # perform scheduling and add the result to self.encoder_schedules
             if emptySchedule:
-                log.debug("ignoring empty encoder schedule in timeslice #" + str(i))
+#               log.debug("ignoring empty encoder schedule in timeslice #" + str(i))
                 self.encoder_schedules.append( [] ) # FIXME check that this is okay
             else:
                 log.debug("optimizing over timeslice #" + str(i) + "...")
@@ -882,7 +893,7 @@ class Builder(object):
             # if this population unit isn't used, program a single no-op on all encoders and continue
             if N >= len(self.population_clusters_1d) and N <= 95 - len(self.population_clusters_2d):
                 # writing zero instructions to an encoder optimizes it out completely
-                log.debug("not programming encoders on unused population unit " + str(N))
+#               log.debug("not programming encoders on unused population unit " + str(N))
                 continue
             # so, this population unit has been assigned at least one population.
             # however, not all encoders are necessarily going to be used;
@@ -904,8 +915,8 @@ class Builder(object):
                     disableEncoder = False
                     break
                 if disableEncoder:
-                    log.debug("not programming unused encoder " + str(E) +
-                              " on population unit " + str(N))
+#                   log.debug("not programming unused encoder " + str(E) +
+#                             " on population unit " + str(N))
                     continue                
 
                 for T in range(1024):
@@ -978,7 +989,7 @@ class Builder(object):
                     pstc = self.cluster_filters_1d[N][F]
                     # fix for filters whose time constant is 0
                     if pstc == 0.0:
-                        log.debug("zeroing unused filter " + str(F) + " on population unit " + str(N))
+#                        log.debug("zeroing unused filter " + str(F) + " on population unit " + str(N))
                         A = 0.0
                         B = 0.0
                     else:
@@ -998,7 +1009,7 @@ class Builder(object):
                     print(addr + "11" + ' ' + Dstr, file=loadfile)
             else:
                 # program bogus filters for unused population unit
-                log.debug("zeroing filters on unused 1D population unit #" + str(N))
+#                log.debug("zeroing filters on unused 1D population unit #" + str(N))
                 # FIXME is this necessary?
                 for F in range(2):
                     Nstr = pad(bin(N)[2:], '0', 7)
@@ -1016,7 +1027,7 @@ class Builder(object):
                 for F in range(4):
                     pstc = self.cluster_filters_2d[cN][F%2]
                     if pstc == 0.0:
-                        log.debug("zeroing unused filter " + str(F) + " on population unit " + str(N))
+#                        log.debug("zeroing unused filter " + str(F) + " on population unit " + str(N))
                         A = 0.0
                         B = 0.0
                     else:
@@ -1036,7 +1047,7 @@ class Builder(object):
                     print(addr + "11" + ' ' + Dstr, file=loadfile)
             else:
                 # program bogus filters for unused population unit
-                log.debug("zeroing filters on unused 2D population unit #" + str(N))
+#                log.debug("zeroing filters on unused 2D population unit #" + str(N))
                 # FIXME is this necessary?
                 for F in range(4):
                     Nstr = pad(bin(N)[2:], '0', 7)
@@ -1483,27 +1494,31 @@ class Builder(object):
         # set up input array to be filled with connections
         probe.inputs = []
 
+    def recompute_decoders(self, population, conn):
+        rng = np.random.RandomState(self.model._get_new_seed())
+        dt = self.model.dt
+        activities = population.activities(conn.eval_points) * dt
+        if conn.function is None:
+            targets = conn.eval_points
+        else:
+            targets = np.array(
+                [conn.function(ep) for ep in conn.eval_points])
+            if targets.ndim < 2:
+                targets.shape = targets.shape[0], 1
+                    
+        conn.base_decoders = conn.decoder_solver(activities, targets, rng) * dt
+           
+        # to solve for approximate decoders wrt. principal components:
+        conn._decoders = np.dot(population.pc_S[0:population.npc, 0:population.npc],
+                                np.dot(population.pc_u[:,0:population.npc].transpose(), 
+                                       conn.base_decoders)).transpose()
+
     def build_connection(self, conn):
         log.debug("Building connection " + conn.label)
-        rng = np.random.RandomState(self.model._get_new_seed())
         dt = self.model.dt
         # find out what we're connecting from
         if isinstance(conn.pre, nengo.Ensemble): # FIXME direct mode?        
-            activities = conn.pre.activities(conn.eval_points) * dt
-            if conn.function is None:
-                targets = conn.eval_points
-            else:
-                targets = np.array(
-                    [conn.function(ep) for ep in conn.eval_points])
-                if targets.ndim < 2:
-                    targets.shape = targets.shape[0], 1
-                    
-            conn.base_decoders = conn.decoder_solver(activities, targets, rng) * dt
-           
-            # to solve for approximate decoders wrt. principal components:
-            conn._decoders = np.dot(conn.pre.pc_S[0:conn.pre.npc, 0:conn.pre.npc],
-                                    np.dot(conn.pre.pc_u[:,0:conn.pre.npc].transpose(), 
-                                           conn.base_decoders)).transpose()
+            self.recompute_decoders(conn.pre, conn)
             log.debug("Decoders for " + conn.label + ": " + os.linesep + str(conn._decoders))
             if conn.filter is not None and conn.filter > dt:
                 conn.o_coef, conn.n_coef = self.filter_coefs(pstc=conn.filter, dt=dt)

@@ -93,7 +93,7 @@ class EthernetIOController(IOController):
     def send(self, dvData):
         if len(dvData) == 0:
             return
-        pairCount = int(math.floor(len(dvData)/2))
+        pairCount = int(math.ceil(len(dvData)/2))
         if pairCount > 256:
             raise ValueError("sending more than 256 pairs of input values, handle this case")
         address = bytes([0, 0])

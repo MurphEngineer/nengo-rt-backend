@@ -17,7 +17,7 @@ hardware = True
 model = nengo.Model(label='Integrator')
 
 input = nengo.Node(nengo.helpers.piecewise({0:0,0.2:1,1:0,2:-2,3:0,4:1,5:0}), label='Piecewise input')
-#input = nengo.Node(nengo.helpers.piecewise({0:0.5}), label='Constant input 0.5')
+#input = nengo.Node(nengo.helpers.piecewise({0:0.5}), label='Constant input')
 
 A = []
 tau = 0.1
@@ -34,6 +34,8 @@ p2 = nengo.Probe(A[0], 'decoded_output', filter=0.01)
 
 def fn(t, x):
     return -1.0 * x
+
+#N = nengo.Node(nengo.helpers.piecewise({0:0,0.2:-1,1:0,2:2,3:0,4:-1,5:0}), label='Piecewise input')
 
 N = nengo.Node(label='Software function', output=fn, size_in=1)
 nengo.Connection(A[0], N, transform=[[1]])
