@@ -88,7 +88,7 @@ class EthernetIOController(IOController):
         # first byte is the highest 8 bits of i1
         # second byte is the lowest 4 bits of i1, then the highest 4 bits of i2
         # third byte is the lowest 8 bits of i2
-        return bytes([i1>>4, (i1&0x0f)<<4 | i2>>8, i2>>8])
+        return bytes([i1>>4, (i1&0x0f)<<4 | i2>>8, i2&0x0ff])
     
     def send(self, dvData):
         if len(dvData) == 0:

@@ -1269,7 +1269,24 @@ class Builder(object):
                         self.probe_address_table[addr] = [probe]
                     probe.dimension_address_table[addr] = dimension
                     dimension += 1
-            probe.dimensions = dimension
+
+        # now do something similar for nodes which have inputs
+        for node in self.nodes:
+            if len(node.inputs) == 0 or node.optimized_out:
+                continue
+            # node performs I/O
+            node.dimension_address_table = {}
+            dimension = 0
+            for conn in node.inputs:
+                for addr in conn.decoded_value_addrs:
+                    probed_addresses.add(addr)
+                    if addr in self.probe_address_table:
+                        self.probe_address_table[addr].append(node)
+                    else:
+                        self.probe_address_table[addr] = [node]
+                    node.dimension_address_table[addr] = dimension
+                    dimension += 1
+
         log.debug("Probes at addresses " + str(probed_addresses))
         if len(probed_addresses) <= 512:
             probed_addresses = list(probed_addresses)
@@ -1460,6 +1477,7 @@ class Builder(object):
         node.outputs = []
         node.dv_addrs_done = False
         node.optimized_out = False
+        node.dimensions = node._size_in
 
     def build_probe(self, probe):
         # set up input array to be filled with connections

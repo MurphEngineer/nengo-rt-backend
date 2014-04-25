@@ -39,7 +39,11 @@ class Simulator(object):
 
     def __del__(self):
         if not self.keep:
-            os.unlink(self.builder.filename)
+            try:
+                os.unlink(self.builder.filename)
+            except AttributeError:
+                # builder never got a filename
+                pass
 
     def setUpControllers(self):
         # Attach a programming and I/O controller
@@ -75,17 +79,27 @@ class Simulator(object):
         """Simulate (free-run) for the given length of time."""
         self.program() # FIXME we may want to run more than once; have a "is_programmed" flag
         
-        # FIXME handle nodes
-
         # initialize probe data collection arrays
         self.probe_data = {}
+        self.io_targets = []
         for probe in self.builder.probes:
+            self.io_targets.append(probe)
             self.probe_data[probe] = []
+        for node in self.builder.nodes:
+            if len(node.inputs) == 0 or node.optimized_out:
+                continue
+            self.io_targets.append(node)
+            self.probe_data[node] = []
 
         # build a buffer for probe data received during each timestep
-        probe_buffer = {}
-        for probe in self.builder.probes:
-            probe_buffer[probe] = [0] * probe.dimensions
+        io_buffer = {}
+        for t in self.io_targets:
+            # Due to bizarre Nengo inconsistencies, the dimensionality of a probe
+            # can either be an int or a tuple.
+            try:
+                io_buffer[t] = [0] * t.dimensions[0]
+            except TypeError:
+                io_buffer[t] = [0] * t.dimensions
 
         log.info("starting free-running hardware simulation")
         self.controller.start()
@@ -107,10 +121,10 @@ class Simulator(object):
                 data = pair[1]
                 for probe in self.builder.probe_address_table[address]:
                     dim = probe.dimension_address_table[address]
-                    probe_buffer[probe][dim] = data
+                    io_buffer[probe][dim] = data
             # now copy and append each probe buffer to the data array for that probe
-            for probe in self.builder.probes:
-                self.probe_data[probe].append( list(probe_buffer[probe]) )
+            for probe in self.io_targets:
+                self.probe_data[probe].append( list(io_buffer[probe]) )
             # send input to the board
             sentValues = []
             for node in self.builder.nodes:
@@ -122,7 +136,7 @@ class Simulator(object):
                     # output is only a function of simulation time
                     output = node.output(currentSimulationTime)
                 else:
-                    raise NotImplementedError("state-dependent nodes not yet supported")
+                    output = node.output(currentSimulationTime, np.asarray(io_buffer[node]))
                 if output.ndim == 0:
                     sentValues.append(output)
                 else:
